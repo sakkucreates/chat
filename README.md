@@ -1,36 +1,102 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ChatPass - Mobile-Friendly Two-Way Passcode Chat Application
 
-## Getting Started
+**ChatPass** is a modern, mobile-friendly two-way conversation app built with Next.js, React, and Tailwind CSS. It is specifically designed for simple setup and zero-login access for end-users, optimized for hosting on **Vercel**.
 
-First, run the development server:
+---
 
+## 🌟 Key Features
+
+- **🛡️ Admin Account Generation**:
+  - Admin can log in with a master passcode (`ADMIN123` by default) to open the Admin Control Panel.
+  - Create user accounts with custom or auto-generated 4-digit passcodes.
+  - Generate **Direct Access Links** (`https://your-app.vercel.app/?code=1001`) that automatically log users in with zero typing required.
+  - Share details directly via WhatsApp or copy to clipboard with 1-click.
+  - Edit or delete user accounts as needed.
+
+- **💬 No Login Required for Users**:
+  - End-users simply enter their assigned passcode on the homepage OR click their direct link.
+  - No email verification, password registration, or login forms needed.
+
+- **📱 Mobile-Friendly Responsive Design**:
+  - WhatsApp / Telegram-like mobile experience.
+  - Automatic drawer navigation between contacts list and active conversation on phones.
+  - Dual-pane side-by-side view on tablet and desktop screens.
+
+- **⚡ Real-Time Two-Way Chat**:
+  - Direct 1-on-1 messaging between users and Admin.
+  - Message status indicators: Delivered (`✓`) and Read receipts (`✓✓`).
+  - Unread message badge counters and live online/offline status.
+  - Image attachments with lightbox previewer.
+  - Quick Emoji bar.
+
+---
+
+## 🚀 Quick Start (Local Development)
+
+### 1. Install Dependencies
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Run the Development Server
+```bash
+npm run dev
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## 🔑 Pre-seeded Quick Test Passcodes
 
-To learn more about Next.js, take a look at the following resources:
+Out of the box, the system comes with 3 sample accounts for quick testing:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Role | Name | Passcode | Description |
+| flex | --- | --- | --- |
+| **Admin** | Admin / Support | `ADMIN123` | Access Admin Dashboard & create new accounts |
+| **User 1** | Alex Johnson | `1001` | Sample user account 1 |
+| **User 2** | Sarah Connor | `2002` | Sample user account 2 |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+## ☁️ Deploying to Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+This project is 100% serverless-ready and optimized for Vercel deployment.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Option 1: Deploy using Vercel Dashboard (Recommended)
+1. Push this project to your GitHub repository.
+2. Go to [vercel.com/new](https://vercel.com/new).
+3. Import your repository.
+4. Click **Deploy**.
+
+### Option 2: Deploy using Vercel CLI
+Run the following command in your terminal:
+```bash
+npx vercel
+```
+
+### ⚙️ Optional Environment Variables
+In your Vercel project settings, you can optionally configure:
+- `ADMIN_CODE`: Custom master admin passcode (Default: `ADMIN123`).
+
+---
+
+## 📁 Project Structure
+
+```
+d:\project1
+├── src/
+│   ├── app/
+│   │   ├── api/             # Serverless API routes (auth, users, admin, messages)
+│   │   ├── layout.tsx       # Root layout with responsive viewport & metadata
+│   │   └── page.tsx         # Main chat workspace & passcode verification logic
+│   ├── components/
+│   │   ├── AdminDashboard.tsx  # Admin modal for creating & sharing user passcodes
+│   │   ├── ChatWindow.tsx      # 1-on-1 chat canvas, message stream & attachments
+│   │   ├── ContactsSidebar.tsx # User contact list with search & unread badges
+│   │   └── PasscodeModal.tsx   # Mobile-friendly passcode login screen
+│   └── lib/
+│       └── db.ts            # Serverless-compatible unified data store
+├── package.json
+└── README.md
+```
