@@ -88,15 +88,14 @@ export default function HomePage() {
     setMobileView('contacts');
   };
 
-  // Session verification on load
+  // Session verification on load (Tab-isolated session: requires login card when opening fresh link)
   useEffect(() => {
     let ignore = false;
     const params = new URLSearchParams(window.location.search);
     const codeFromUrl = params.get('code');
     const sessionCode = typeof window !== 'undefined' ? sessionStorage.getItem('chatpass_user_code') : null;
-    const localCode = typeof window !== 'undefined' ? localStorage.getItem('chatpass_user_code') : null;
 
-    const codeToVerify = codeFromUrl || sessionCode || localCode;
+    const codeToVerify = codeFromUrl || sessionCode;
 
     if (codeToVerify) {
       fetch('/api/auth/verify', {
@@ -111,13 +110,11 @@ export default function HomePage() {
             if (data.success && data.user) {
               setCurrentUser(data.user);
               sessionStorage.setItem('chatpass_user_code', data.user.code);
-              localStorage.setItem('chatpass_user_code', data.user.code);
               if (codeFromUrl && typeof window !== 'undefined') {
                 window.history.replaceState({}, document.title, window.location.pathname);
               }
             } else {
               sessionStorage.removeItem('chatpass_user_code');
-              localStorage.removeItem('chatpass_user_code');
             }
             setInitialChecking(false);
           }
