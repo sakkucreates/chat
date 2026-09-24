@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import PasscodeModal from '@/components/PasscodeModal';
 import ContactsSidebar from '@/components/ContactsSidebar';
 import ChatWindow from '@/components/ChatWindow';
@@ -26,11 +26,24 @@ export default function HomePage() {
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [mobileView, setMobileView] = useState<'contacts' | 'chat'>('contacts');
 
+  // Ref to track in-flight message polling AbortController
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   // Derived Active Contact Object (stable primitive string lookup)
   const activeContact = useMemo(
     () => users.find((u) => u.id === activeContactId) || null,
     [users, activeContactId]
   );
+
+  // Helper function to safely merge & deduplicate messages by ID, sorting chronologically
+  const mergeMessages = useCallback((existingMsgs: Message[], incomingMsgs: Message[]): Message[] => {
+    const map = new Map<string, Message>();
+    existingMsgs.forEach((m) => map.set(m.id, m));
+    incomingMsgs.forEach((m) => map.set(m.id, m));
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+  }, []);
 
   // Verify Passcode Login & Update Tab Session State
   const handleLogin = async (code: string): Promise<boolean> => {
@@ -40,7 +53,8 @@ export default function HomePage() {
       const res = await fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code })
+        body: JSON.stringify({ code }),
+        cache: 'no-store'
       });
       const data = await res.json();
 
@@ -49,7 +63,6 @@ export default function HomePage() {
         return false;
       }
 
-      // Explicitly set authenticated currentUser identity for this tab session
       setCurrentUser(data.user);
       sessionStorage.setItem('chatpass_user_code', data.user.code);
       localStorage.setItem('chatpass_user_code', data.user.code);
@@ -64,6 +77,9 @@ export default function HomePage() {
 
   // Explicit Per-Tab Logout Flow
   const handleLogout = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     sessionStorage.removeItem('chatpass_user_code');
     localStorage.removeItem('chatpass_user_code');
     setCurrentUser(null);
@@ -72,7 +88,7 @@ export default function HomePage() {
     setMobileView('contacts');
   };
 
-  // Session verification on load (Prioritizes URL ?code=..., then sessionStorage, then localStorage)
+  // Session verification on load
   useEffect(() => {
     let ignore = false;
     const params = new URLSearchParams(window.location.search);
@@ -86,7 +102,8 @@ export default function HomePage() {
       fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: codeToVerify })
+        body: JSON.stringify({ code: codeToVerify }),
+        cache: 'no-store'
       })
         .then((res) => res.json())
         .then((data) => {
@@ -95,7 +112,6 @@ export default function HomePage() {
               setCurrentUser(data.user);
               sessionStorage.setItem('chatpass_user_code', data.user.code);
               localStorage.setItem('chatpass_user_code', data.user.code);
-              // Clean URL query param after verification
               if (codeFromUrl && typeof window !== 'undefined') {
                 window.history.replaceState({}, document.title, window.location.pathname);
               }
@@ -116,11 +132,11 @@ export default function HomePage() {
     return () => { ignore = true; };
   }, []);
 
-  // Poll Users & Contact List Status (Depends strictly on currentUser.id)
+  // Poll Users & Contact List Status
   const fetchUsers = useCallback(async () => {
     if (!currentUser) return;
     try {
-      const res = await fetch(`/api/users?userId=${currentUser.id}`);
+      const res = await fetch(`/api/users?userId=${currentUser.id}`, { cache: 'no-store' });
       const data = await res.json();
       if (data.users) {
         setUsers(data.users);
@@ -130,19 +146,36 @@ export default function HomePage() {
     }
   }, [currentUser]);
 
-  // Poll Conversation Messages (Depends strictly on activeContactId)
+  // Poll Conversation Messages (with deduplication & cancellation)
   const fetchMessages = useCallback(async () => {
     if (!currentUser || !activeContactId) return;
-    try {
-      const res = await fetch(`/api/messages?userId=${currentUser.id}&contactId=${activeContactId}`);
-      const data = await res.json();
-      if (data.messages) {
-        setMessages(data.messages);
-      }
-    } catch {
-      // Ignored
+
+    // Abort previous in-flight request if present
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
-  }, [currentUser, activeContactId]);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const res = await fetch(
+        `/api/messages?userId=${currentUser.id}&contactId=${activeContactId}`,
+        {
+          cache: 'no-store',
+          signal: controller.signal
+        }
+      );
+      const data = await res.json();
+      if (data.messages && !controller.signal.aborted) {
+        // Merge & deduplicate incoming messages to PREVENT any message from disappearing
+        setMessages((prevMsgs) => mergeMessages(prevMsgs, data.messages));
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error('Error polling messages:', err);
+      }
+    }
+  }, [currentUser, activeContactId, mergeMessages]);
 
   // Periodic user list polling (2.5s)
   useEffect(() => {
@@ -160,7 +193,7 @@ export default function HomePage() {
     };
   }, [currentUser, fetchUsers]);
 
-  // Periodic message polling (1.5s)
+  // Periodic message polling (1.5s) with cleanup
   useEffect(() => {
     if (!currentUser || !activeContactId) return;
 
@@ -172,6 +205,9 @@ export default function HomePage() {
     const msgInterval = setInterval(fetchMessages, 1500);
 
     return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
       clearTimeout(timer);
       clearInterval(msgInterval);
     };
@@ -189,12 +225,14 @@ export default function HomePage() {
           receiverId: activeContactId,
           text,
           image
-        })
+        }),
+        cache: 'no-store'
       });
 
       const data = await res.json();
       if (data.message) {
-        setMessages((prev) => [...prev, data.message]);
+        // Safely add server-returned message using Map deduplication
+        setMessages((prev) => mergeMessages(prev, [data.message]));
         fetchUsers();
       }
     } catch {
@@ -204,6 +242,9 @@ export default function HomePage() {
 
   const handleSelectContact = (contact: User) => {
     if (activeContactId !== contact.id) {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
       setActiveContactId(contact.id);
       setMessages([]);
     }

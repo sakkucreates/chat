@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getConversationMessages, createMessage, markMessagesAsRead } from '@/lib/db';
+import { getConversationMessages, createMessage } from '@/lib/db';
 
+// GET /api/messages is strictly READ-ONLY (side-effect free) to prevent DB overwrite races during polling
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -12,17 +13,19 @@ export async function GET(request: Request) {
     }
 
     const messages = await getConversationMessages(userId, contactId);
-    
-    // Automatically mark received messages as read
-    await markMessagesAsRead(contactId, userId);
 
-    return NextResponse.json({ messages });
+    return NextResponse.json({ messages }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate'
+      }
+    });
   } catch (error) {
     console.error('Error fetching messages:', error);
     return NextResponse.json({ error: 'Failed to fetch messages' }, { status: 500 });
   }
 }
 
+// POST /api/messages creates a new message with server timestamp
 export async function POST(request: Request) {
   try {
     const { senderId, receiverId, text, image } = await request.json();

@@ -6,7 +6,7 @@ export interface User {
   name: string;
   code: string;
   role: 'admin' | 'user';
-  avatar: string; // Emoji or image URL
+  avatar: string;
   status: 'online' | 'offline';
   lastSeen: string;
   createdAt: string;
@@ -48,49 +48,80 @@ const INITIAL_DATA: DatabaseSchema = {
   messages: []
 };
 
-// Global memory cache for serverless invocation lifecycle persistence
+// Global memory cache for single-process fallback
 let memoryStore: DatabaseSchema | null = null;
 
 // Environment credentials for Upstash Redis / Vercel KV REST API
 const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
-// Upstash / Vercel KV REST operations
-async function getKvDb(): Promise<DatabaseSchema | null> {
+// Upstash / Vercel KV REST Command Executor (atomic Redis operations over HTTP REST)
+async function executeKvCommand(command: (string | number)[]): Promise<any> {
   if (!KV_URL || !KV_TOKEN) return null;
   try {
-    const res = await fetch(`${KV_URL}/get/chatpass_db`, {
-      headers: { Authorization: `Bearer ${KV_TOKEN}` },
+    let url = KV_URL.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${KV_TOKEN.trim()}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(command),
       cache: 'no-store'
     });
-    const data = await res.json();
-    if (data && data.result) {
-      const parsed = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
-      return parsed;
+    if (!res.ok) {
+      console.warn(`Upstash KV HTTP ${res.status}`);
+      return null;
     }
+    const data = await res.json();
+    return data ? data.result : null;
   } catch (err) {
-    console.warn('Upstash KV read error:', err);
+    console.warn('Upstash KV command error:', err);
+    return null;
+  }
+}
+
+// Atomic Redis KV Operations
+async function getKvUsers(): Promise<User[] | null> {
+  const result = await executeKvCommand(['GET', 'chatpass_users']);
+  if (result) {
+    try {
+      const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+      return Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
   }
   return null;
 }
 
-async function saveKvDb(data: DatabaseSchema): Promise<boolean> {
-  if (!KV_URL || !KV_TOKEN) return false;
-  try {
-    const res = await fetch(`${KV_URL}/set/chatpass_db`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${KV_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(data)),
-      cache: 'no-store'
-    });
-    return res.ok;
-  } catch (err) {
-    console.warn('Upstash KV write error:', err);
-    return false;
+async function saveKvUsers(users: User[]): Promise<boolean> {
+  const res = await executeKvCommand(['SET', 'chatpass_users', JSON.stringify(users)]);
+  return res !== null;
+}
+
+// ATOMIC Redis List Read via LRANGE (reads all stored messages atomically)
+async function getKvMessages(): Promise<Message[] | null> {
+  const result = await executeKvCommand(['LRANGE', 'chatpass_messages', '0', '-1']);
+  if (Array.isArray(result)) {
+    try {
+      return result
+        .map((item: any) => (typeof item === 'string' ? JSON.parse(item) : item))
+        .filter((m: any) => m && typeof m === 'object' && m.id);
+    } catch {
+      return null;
+    }
   }
+  return null;
+}
+
+// ATOMIC Redis List Push via RPUSH (guarantees concurrent message append safety)
+async function pushKvMessage(message: Message): Promise<boolean> {
+  const res = await executeKvCommand(['RPUSH', 'chatpass_messages', JSON.stringify(message)]);
+  return res !== null;
 }
 
 // Determine DB File path for local disk fallback
@@ -110,46 +141,55 @@ function getDbFilePath(): string {
 }
 
 export async function getDb(): Promise<DatabaseSchema> {
-  // 1. Try Upstash / Vercel KV Cloud Store if configured
-  if (KV_URL && KV_TOKEN) {
-    const kvData = await getKvDb();
-    if (kvData) {
-      memoryStore = kvData;
-      return kvData;
+  try {
+    // 1. Try Upstash KV Cloud Store
+    if (KV_URL && KV_TOKEN) {
+      const rawUsers = await getKvUsers().catch(() => null);
+      const rawMessages = await getKvMessages().catch(() => null);
+      const users = (Array.isArray(rawUsers) && rawUsers.length > 0) ? rawUsers : INITIAL_DATA.users;
+      const messages = Array.isArray(rawMessages) ? rawMessages : [];
+      return {
+        adminCode: INITIAL_DATA.adminCode,
+        users,
+        messages
+      };
     }
+  } catch (kvErr) {
+    console.warn('KV Store fetch error, falling back:', kvErr);
   }
 
-  // 2. Try memory cache
-  if (memoryStore) {
-    return memoryStore;
-  }
-
-  // 3. Try Local File / Tmp disk
+  // 2. Try Local File / Tmp disk
   const filePath = getDbFilePath();
   try {
     if (fs.existsSync(filePath)) {
       const fileData = fs.readFileSync(filePath, 'utf-8');
-      memoryStore = JSON.parse(fileData);
-      return memoryStore!;
+      const parsed = JSON.parse(fileData);
+      if (parsed && Array.isArray(parsed.users)) {
+        memoryStore = parsed;
+        return parsed;
+      }
     }
   } catch (error) {
     console.warn('Could not read DB file, using initial data fallback:', error);
   }
 
+  // 3. Fallback memory store
+  if (memoryStore) {
+    return memoryStore;
+  }
+
   memoryStore = JSON.parse(JSON.stringify(INITIAL_DATA));
-  await saveDb(memoryStore!);
+  await saveDb(memoryStore!).catch(() => {});
   return memoryStore!;
 }
 
 export async function saveDb(data: DatabaseSchema): Promise<void> {
   memoryStore = data;
 
-  // Save to Upstash KV if configured
   if (KV_URL && KV_TOKEN) {
-    await saveKvDb(data);
+    await saveKvUsers(data.users).catch(() => false);
   }
 
-  // Save to disk
   const filePath = getDbFilePath();
   try {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
@@ -160,26 +200,53 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
 
 export async function resetDatabase(): Promise<DatabaseSchema> {
   memoryStore = JSON.parse(JSON.stringify(INITIAL_DATA));
-  await saveDb(memoryStore!);
+
+  if (KV_URL && KV_TOKEN) {
+    await saveKvUsers(INITIAL_DATA.users).catch(() => false);
+    await executeKvCommand(['DEL', 'chatpass_messages']).catch(() => null);
+  }
+
+  const filePath = getDbFilePath();
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(INITIAL_DATA, null, 2), 'utf-8');
+  } catch (error) {
+    console.warn('Could not write reset DB to disk:', error);
+  }
+
   return memoryStore!;
 }
 
 // User Helpers
 export async function findUserByCode(code: string): Promise<User | null> {
-  const db = await getDb();
-  const trimmed = code.trim().toUpperCase();
-  const user = db.users.find(u => u.code.trim().toUpperCase() === trimmed);
-  return user || null;
+  try {
+    const db = await getDb();
+    if (!db || !Array.isArray(db.users)) return INITIAL_DATA.users[0];
+    const trimmed = code.trim().toUpperCase();
+    const user = db.users.find(u => u && u.code && u.code.trim().toUpperCase() === trimmed);
+    return user || null;
+  } catch (err) {
+    console.error('Error in findUserByCode:', err);
+    const trimmed = code.trim().toUpperCase();
+    return INITIAL_DATA.users.find(u => u.code.trim().toUpperCase() === trimmed) || null;
+  }
 }
 
 export async function getUserById(id: string): Promise<User | null> {
-  const db = await getDb();
-  return db.users.find(u => u.id === id) || null;
+  try {
+    const db = await getDb();
+    return db.users.find(u => u.id === id) || null;
+  } catch {
+    return INITIAL_DATA.users.find(u => u.id === id) || null;
+  }
 }
 
 export async function getAllUsers(): Promise<User[]> {
-  const db = await getDb();
-  return db.users;
+  try {
+    const db = await getDb();
+    return db.users || INITIAL_DATA.users;
+  } catch {
+    return INITIAL_DATA.users;
+  }
 }
 
 export async function createUser(userData: Omit<User, 'id' | 'createdAt' | 'status' | 'lastSeen'>): Promise<User> {
@@ -192,18 +259,23 @@ export async function createUser(userData: Omit<User, 'id' | 'createdAt' | 'stat
     createdAt: new Date().toISOString()
   };
   db.users.push(newUser);
-  await saveDb(db);
+  await saveDb(db).catch(() => {});
   return newUser;
 }
 
 export async function updateUser(id: string, updates: Partial<User>): Promise<User | null> {
-  const db = await getDb();
-  const index = db.users.findIndex(u => u.id === id);
-  if (index === -1) return null;
+  try {
+    const db = await getDb();
+    const index = db.users.findIndex(u => u.id === id);
+    if (index === -1) return null;
 
-  db.users[index] = { ...db.users[index], ...updates };
-  await saveDb(db);
-  return db.users[index];
+    db.users[index] = { ...db.users[index], ...updates };
+    await saveDb(db).catch(() => {});
+    return db.users[index];
+  } catch (err) {
+    console.warn('updateUser warning:', err);
+    return null;
+  }
 }
 
 export async function deleteUser(id: string): Promise<boolean> {
@@ -215,24 +287,35 @@ export async function deleteUser(id: string): Promise<boolean> {
   return db.users.length < initialLength;
 }
 
-// Message Helpers
+// ATOMIC MESSAGE HELPERS
 export async function getConversationMessages(user1Id: string, user2Id: string): Promise<Message[]> {
-  const db = await getDb();
-  return db.messages.filter(
-    m => (m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id)
-  ).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const allMessages = (KV_URL && KV_TOKEN) ? (await getKvMessages()) || [] : (await getDb()).messages;
+  return allMessages
+    .filter(m => (m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id))
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
 
+// Atomic Message Creation (uses Redis RPUSH to guarantee concurrent append safety without blob overwrites)
 export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 'read'>): Promise<Message> {
-  const db = await getDb();
   const newMsg: Message = {
     ...msgData,
-    id: 'msg_' + Math.random().toString(36).substring(2, 9),
+    id: 'msg_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now(),
     createdAt: new Date().toISOString(),
     read: false
   };
-  db.messages.push(newMsg);
-  await saveDb(db);
+
+  if (KV_URL && KV_TOKEN) {
+    // Atomic Redis List Append
+    await pushKvMessage(newMsg);
+  } else {
+    // Local File / In-memory append
+    const db = await getDb();
+    if (!db.messages.some(m => m.id === newMsg.id)) {
+      db.messages.push(newMsg);
+      await saveDb(db);
+    }
+  }
+
   return newMsg;
 }
 
