@@ -9,7 +9,7 @@ import { User, Message } from '@/lib/db';
 import { MessageSquare, Shield } from 'lucide-react';
 
 export default function HomePage() {
-  // Current User Session
+  // Current Authenticated User Session
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export default function HomePage() {
     [users, activeContactId]
   );
 
-  // Verify Passcode Login
+  // Verify Passcode Login & Update Session State
   const handleLogin = async (code: string): Promise<boolean> => {
     setAuthLoading(true);
     setAuthError(null);
@@ -44,13 +44,14 @@ export default function HomePage() {
       });
       const data = await res.json();
 
-      if (!res.ok || data.error) {
+      if (!res.ok || data.error || !data.user) {
         setAuthError(data.error || 'Invalid passcode');
         return false;
       }
 
+      // Explicitly set authenticated currentUser identity from API response
       setCurrentUser(data.user);
-      localStorage.setItem('chatpass_user_code', code);
+      localStorage.setItem('chatpass_user_code', data.user.code);
       return true;
     } catch {
       setAuthError('Connection error. Please try again.');
@@ -60,6 +61,7 @@ export default function HomePage() {
     }
   };
 
+  // Explicit Logout / Switch Account Flow
   const handleLogout = () => {
     localStorage.removeItem('chatpass_user_code');
     setCurrentUser(null);
@@ -87,7 +89,13 @@ export default function HomePage() {
           if (!ignore) {
             if (data.success && data.user) {
               setCurrentUser(data.user);
-              localStorage.setItem('chatpass_user_code', codeToVerify);
+              localStorage.setItem('chatpass_user_code', data.user.code);
+              // Clean URL query param after verification
+              if (codeFromUrl && typeof window !== 'undefined') {
+                window.history.replaceState({}, document.title, window.location.pathname);
+              }
+            } else {
+              localStorage.removeItem('chatpass_user_code');
             }
             setInitialChecking(false);
           }
@@ -255,7 +263,7 @@ export default function HomePage() {
               </div>
               <h2 className="text-xl font-bold text-white">Your Direct Messages</h2>
               <p className="text-slate-400 text-xs mt-2 max-w-sm">
-                Select any user from the contact list to start chatting. Zero login required for all invited users!
+                Select any contact from the left sidebar to start chatting as <strong>{currentUser.name}</strong>.
               </p>
 
               {currentUser.role === 'admin' && (
