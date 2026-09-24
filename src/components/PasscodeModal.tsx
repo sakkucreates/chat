@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
-import { KeyRound, ShieldCheck, UserCheck, Sparkles, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { KeyRound, ShieldCheck, UserCheck, ArrowRight, RefreshCw } from 'lucide-react';
+import { User } from '@/lib/db';
 
 interface PasscodeModalProps {
   onLogin: (code: string) => Promise<boolean>;
@@ -11,8 +12,29 @@ interface PasscodeModalProps {
 
 export default function PasscodeModal({ onLogin, loading, error }: PasscodeModalProps) {
   const [code, setCode] = useState('');
+  const [availableUsers, setAvailableUsers] = useState<User[]>([]);
+  const [fetchingUsers, setFetchingUsers] = useState(false);
 
-  // Quick helper to fill sample codes
+  // Fetch created users for quick passcode selection
+  const fetchAvailableUsers = async () => {
+    setFetchingUsers(true);
+    try {
+      const res = await fetch('/api/admin/users');
+      const data = await res.json();
+      if (data.users) {
+        setAvailableUsers(data.users);
+      }
+    } catch {
+      // Ignored
+    } finally {
+      setFetchingUsers(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAvailableUsers();
+  }, []);
+
   const handleQuickFill = (sampleCode: string) => {
     setCode(sampleCode);
     onLogin(sampleCode);
@@ -38,7 +60,7 @@ export default function PasscodeModal({ onLogin, loading, error }: PasscodeModal
           </div>
           <h1 className="text-2xl font-bold tracking-tight">Welcome to ChatPass</h1>
           <p className="text-indigo-100 text-sm mt-1 max-w-xs mx-auto">
-            Zero-friction two-way chat. Enter your Passcode provided by Admin to enter instantly.
+            Zero-friction two-way chat. Enter your Passcode provided by Admin to log in.
           </p>
         </div>
 
@@ -54,7 +76,7 @@ export default function PasscodeModal({ onLogin, loading, error }: PasscodeModal
                   type="text"
                   value={code}
                   onChange={(e) => setCode(e.target.value.toUpperCase())}
-                  placeholder="e.g. 1001 or ADMIN123"
+                  placeholder="e.g. 6816 or ADMIN123"
                   className="w-full bg-slate-800/80 border border-slate-700/80 rounded-2xl px-4 py-3.5 text-center text-xl font-mono tracking-widest text-white placeholder:text-slate-500 placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
                   maxLength={12}
                   autoFocus
@@ -84,42 +106,43 @@ export default function PasscodeModal({ onLogin, loading, error }: PasscodeModal
             </button>
           </form>
 
-          {/* Quick Demo Access Badges */}
+          {/* Real Available User Account Switcher Badges */}
           <div className="border-t border-slate-800 pt-5">
-            <p className="text-xs font-medium text-slate-400 mb-3 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Quick Test Passcodes (Click to test):</span>
-            </p>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-medium text-slate-400">
+                Available Accounts (Click to log in):
+              </p>
               <button
                 type="button"
-                onClick={() => handleQuickFill('ADMIN123')}
-                className="flex flex-col items-center justify-center p-2.5 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-indigo-500/50 rounded-xl text-left transition-all group"
+                onClick={fetchAvailableUsers}
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
               >
-                <ShieldCheck className="w-4 h-4 text-emerald-400 mb-1 group-hover:scale-110 transition-transform" />
-                <span className="text-[11px] font-semibold text-slate-300">Admin</span>
-                <span className="text-[10px] font-mono text-emerald-400/90">ADMIN123</span>
+                <RefreshCw className={`w-3 h-3 ${fetchingUsers ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
               </button>
+            </div>
 
-              <button
-                type="button"
-                onClick={() => handleQuickFill('1001')}
-                className="flex flex-col items-center justify-center p-2.5 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-indigo-500/50 rounded-xl text-left transition-all group"
-              >
-                <UserCheck className="w-4 h-4 text-indigo-400 mb-1 group-hover:scale-110 transition-transform" />
-                <span className="text-[11px] font-semibold text-slate-300">Alex (User)</span>
-                <span className="text-[10px] font-mono text-indigo-400/90">1001</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickFill('2002')}
-                className="flex flex-col items-center justify-center p-2.5 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-indigo-500/50 rounded-xl text-left transition-all group"
-              >
-                <UserCheck className="w-4 h-4 text-purple-400 mb-1 group-hover:scale-110 transition-transform" />
-                <span className="text-[11px] font-semibold text-slate-300">Sarah (User)</span>
-                <span className="text-[10px] font-mono text-purple-400/90">2002</span>
-              </button>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+              {availableUsers.map((u) => (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => handleQuickFill(u.code)}
+                  className="flex flex-col items-center justify-center p-2.5 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-indigo-500/50 rounded-xl text-left transition-all group"
+                >
+                  {u.role === 'admin' ? (
+                    <ShieldCheck className="w-4 h-4 text-emerald-400 mb-1 group-hover:scale-110 transition-transform" />
+                  ) : (
+                    <UserCheck className="w-4 h-4 text-indigo-400 mb-1 group-hover:scale-110 transition-transform" />
+                  )}
+                  <span className="text-[11px] font-semibold text-slate-200 truncate max-w-full">
+                    {u.avatar} {u.name}
+                  </span>
+                  <span className="text-[10px] font-mono text-emerald-400/90 mt-0.5">
+                    {u.code}
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
