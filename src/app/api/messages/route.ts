@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getConversationMessages, createMessage } from '@/lib/db';
+import { getConversationMessages, createMessage, markMessagesAsRead } from '@/lib/db';
 
-// GET /api/messages is strictly READ-ONLY (side-effect free) to prevent DB overwrite races during polling
+// GET /api/messages returns conversation messages & automatically marks unread received messages as read
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -11,6 +11,9 @@ export async function GET(request: Request) {
     if (!userId || !contactId) {
       return NextResponse.json({ error: 'userId and contactId are required' }, { status: 400 });
     }
+
+    // Auto mark unread messages sent BY contactId TO userId as read
+    await markMessagesAsRead(contactId, userId);
 
     const messages = await getConversationMessages(userId, contactId);
 

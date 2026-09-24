@@ -324,8 +324,9 @@ async function saveKvMessages(messages: Message[]): Promise<boolean> {
   if (!KV_URL || !KV_TOKEN) return false;
   try {
     await executeKvCommand(['DEL', 'chatpass_messages']);
-    for (const m of messages) {
-      await pushKvMessage(m);
+    if (messages.length > 0) {
+      const stringifiedMsgs = messages.map((m) => JSON.stringify(m));
+      await executeKvCommand(['RPUSH', 'chatpass_messages', ...stringifiedMsgs]);
     }
     return true;
   } catch (err) {
