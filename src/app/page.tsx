@@ -9,7 +9,7 @@ import { User, Message } from '@/lib/db';
 import { MessageSquare, Shield } from 'lucide-react';
 
 export default function HomePage() {
-  // Current Authenticated User Session
+  // Current Authenticated User Session for this browser tab
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export default function HomePage() {
     [users, activeContactId]
   );
 
-  // Verify Passcode Login & Update Session State
+  // Verify Passcode Login & Update Tab Session State
   const handleLogin = async (code: string): Promise<boolean> => {
     setAuthLoading(true);
     setAuthError(null);
@@ -49,8 +49,9 @@ export default function HomePage() {
         return false;
       }
 
-      // Explicitly set authenticated currentUser identity from API response
+      // Explicitly set authenticated currentUser identity for this tab session
       setCurrentUser(data.user);
+      sessionStorage.setItem('chatpass_user_code', data.user.code);
       localStorage.setItem('chatpass_user_code', data.user.code);
       return true;
     } catch {
@@ -61,8 +62,9 @@ export default function HomePage() {
     }
   };
 
-  // Explicit Logout / Switch Account Flow
+  // Explicit Per-Tab Logout Flow
   const handleLogout = () => {
+    sessionStorage.removeItem('chatpass_user_code');
     localStorage.removeItem('chatpass_user_code');
     setCurrentUser(null);
     setActiveContactId(null);
@@ -70,13 +72,15 @@ export default function HomePage() {
     setMobileView('contacts');
   };
 
-  // URL Auto-login parameter check (?code=XYZ)
+  // Session verification on load (Prioritizes URL ?code=..., then sessionStorage, then localStorage)
   useEffect(() => {
     let ignore = false;
     const params = new URLSearchParams(window.location.search);
     const codeFromUrl = params.get('code');
-    const savedCode = localStorage.getItem('chatpass_user_code');
-    const codeToVerify = codeFromUrl || savedCode;
+    const sessionCode = typeof window !== 'undefined' ? sessionStorage.getItem('chatpass_user_code') : null;
+    const localCode = typeof window !== 'undefined' ? localStorage.getItem('chatpass_user_code') : null;
+
+    const codeToVerify = codeFromUrl || sessionCode || localCode;
 
     if (codeToVerify) {
       fetch('/api/auth/verify', {
@@ -89,12 +93,14 @@ export default function HomePage() {
           if (!ignore) {
             if (data.success && data.user) {
               setCurrentUser(data.user);
+              sessionStorage.setItem('chatpass_user_code', data.user.code);
               localStorage.setItem('chatpass_user_code', data.user.code);
               // Clean URL query param after verification
               if (codeFromUrl && typeof window !== 'undefined') {
                 window.history.replaceState({}, document.title, window.location.pathname);
               }
             } else {
+              sessionStorage.removeItem('chatpass_user_code');
               localStorage.removeItem('chatpass_user_code');
             }
             setInitialChecking(false);
