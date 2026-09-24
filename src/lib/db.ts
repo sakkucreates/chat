@@ -29,7 +29,7 @@ export interface DatabaseSchema {
   adminCode: string;
 }
 
-// Default initial state
+// Clean initial state (Only Admin account, zero pre-filled demo clutter)
 const INITIAL_DATA: DatabaseSchema = {
   adminCode: process.env.ADMIN_CODE || 'ADMIN123',
   users: [
@@ -43,56 +43,9 @@ const INITIAL_DATA: DatabaseSchema = {
       lastSeen: new Date().toISOString(),
       createdAt: new Date().toISOString(),
       notes: 'System Administrator Account'
-    },
-    {
-      id: 'user_demo1',
-      name: 'Alex Johnson',
-      code: '1001',
-      role: 'user',
-      avatar: '👨‍💻',
-      status: 'online',
-      lastSeen: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      notes: 'Sample Demo Account 1'
-    },
-    {
-      id: 'user_demo2',
-      name: 'Sarah Connor',
-      code: '2002',
-      role: 'user',
-      avatar: '👩‍💼',
-      status: 'offline',
-      lastSeen: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-      createdAt: new Date().toISOString(),
-      notes: 'Sample Demo Account 2'
     }
   ],
-  messages: [
-    {
-      id: 'msg_init_1',
-      senderId: 'admin_root',
-      receiverId: 'user_demo1',
-      text: 'Welcome to ChatPass! Your account has been created by the Admin.',
-      createdAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-      read: true
-    },
-    {
-      id: 'msg_init_2',
-      senderId: 'user_demo1',
-      receiverId: 'admin_root',
-      text: 'Thanks! This chat setup is super easy to use without login.',
-      createdAt: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
-      read: true
-    },
-    {
-      id: 'msg_init_3',
-      senderId: 'user_demo1',
-      receiverId: 'user_demo2',
-      text: 'Hey Sarah, are you online?',
-      createdAt: new Date(Date.now() - 1000 * 60 * 10).toISOString(),
-      read: false
-    }
-  ]
+  messages: []
 };
 
 // Global memory cache for serverless invocation lifecycle persistence
@@ -108,7 +61,6 @@ function getDbFilePath(): string {
     try {
       fs.mkdirSync(dataDir, { recursive: true });
     } catch {
-      // Fallback to tmp
       return path.join('/tmp', 'chat_db.json');
     }
   }
@@ -144,6 +96,19 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
   } catch (error) {
     console.warn('Could not write DB file to disk:', error);
   }
+}
+
+export async function resetDatabase(): Promise<DatabaseSchema> {
+  memoryStore = JSON.parse(JSON.stringify(INITIAL_DATA));
+  const filePath = getDbFilePath();
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, JSON.stringify(INITIAL_DATA, null, 2), 'utf-8');
+    }
+  } catch (error) {
+    console.warn('Could not reset DB file on disk:', error);
+  }
+  return memoryStore!;
 }
 
 // User Helpers

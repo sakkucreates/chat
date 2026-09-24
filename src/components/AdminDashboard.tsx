@@ -13,7 +13,8 @@ import {
   MessageSquare,
   Shield,
   Sparkles,
-  Edit2
+  Edit2,
+  AlertTriangle
 } from 'lucide-react';
 import { User } from '@/lib/db';
 
@@ -131,6 +132,17 @@ export default function AdminDashboard({ onClose, onSelectUserForChat }: AdminDa
       fetchUsers();
     } catch {
       // Ignored
+    }
+  };
+
+  const handleResetAllData = async () => {
+    if (!confirm('Are you sure you want to clear ALL existing demo accounts and messages? Only the Admin account will remain.')) return;
+    try {
+      await fetch('/api/admin/reset', { method: 'POST' });
+      fetchUsers();
+      alert('All demo chats and accounts have been reset successfully!');
+    } catch {
+      alert('Failed to reset data');
     }
   };
 
@@ -407,13 +419,22 @@ export default function AdminDashboard({ onClose, onSelectUserForChat }: AdminDa
             <div className="space-y-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-slate-400">All Created User Accounts</span>
-                <button
-                  onClick={fetchUsers}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${loadingUsers ? 'animate-spin' : ''}`} />
-                  <span>Refresh</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleResetAllData}
+                    className="text-xs bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 px-3 py-1 rounded-xl flex items-center gap-1 transition-all"
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>Purge Demo Chats</span>
+                  </button>
+                  <button
+                    onClick={fetchUsers}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingUsers ? 'animate-spin' : ''}`} />
+                    <span>Refresh</span>
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-2">

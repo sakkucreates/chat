@@ -10,7 +10,10 @@ import {
   Smile, 
   X, 
   Sparkles,
-  Lock
+  Lock,
+  Phone,
+  Video,
+  MoreVertical
 } from 'lucide-react';
 import { User, Message } from '@/lib/db';
 
@@ -23,7 +26,7 @@ interface ChatWindowProps {
   loading: boolean;
 }
 
-const QUICK_EMOJIS = ['👍', '❤️', '😂', '🔥', '🎉', '👋', '🙏', '✨'];
+const QUICK_EMOJIS = ['👍', '❤️', '😂', '🔥', '🎉', '👋', '🙏', '✨', '😊', '😍', '🙌', '💯'];
 
 export default function ChatWindow({
   currentUser,
@@ -100,77 +103,82 @@ export default function ChatWindow({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-950 relative overflow-hidden">
-      {/* Top Header Bar */}
-      <div className="p-3 sm:p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between z-10">
+    <div className="flex-1 flex flex-col h-full bg-[#0b141a] relative overflow-hidden">
+      {/* WhatsApp Header Bar */}
+      <div className="px-4 py-3 bg-[#202c33] border-b border-[#2a3942] flex items-center justify-between z-10 shadow-md">
         <div className="flex items-center gap-3">
           <button
             onClick={onBack}
-            className="md:hidden p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white"
+            className="md:hidden p-1.5 rounded-full text-slate-300 hover:text-white hover:bg-slate-700/50"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
 
           <div className="relative">
-            <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-xl">
+            <div className="w-10 h-10 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center text-xl shadow-inner">
               {contact.avatar}
             </div>
-            {contact.status === 'online' ? (
-              <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-slate-900 rounded-full" />
-            ) : (
-              <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-slate-500 border-2 border-slate-900 rounded-full" />
+            {contact.status === 'online' && (
+              <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-[#202c33] rounded-full" />
             )}
           </div>
 
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="font-bold text-white text-sm sm:text-base leading-tight">{contact.name}</h3>
+              <h3 className="font-bold text-slate-100 text-sm sm:text-base leading-tight">{contact.name}</h3>
               {contact.role === 'admin' && (
-                <span className="bg-amber-500/20 text-amber-400 text-[10px] px-1.5 py-0.2 rounded font-medium border border-amber-500/30">
+                <span className="bg-emerald-500/20 text-emerald-400 text-[10px] px-1.5 py-0.2 rounded font-semibold border border-emerald-500/30">
                   Admin
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
+            <p className="text-[11px] text-emerald-400 font-medium mt-0.5 flex items-center gap-1.5">
               {contact.status === 'online' ? (
-                <span className="text-emerald-400 font-medium">Online now</span>
+                <span>online</span>
               ) : (
-                <span>Offline</span>
+                <span className="text-slate-400">offline • Code: {contact.code}</span>
               )}
-              <span className="text-slate-600">•</span>
-              <span className="font-mono text-slate-400">Passcode: {contact.code}</span>
             </p>
           </div>
         </div>
 
-        {/* Security / End-to-end indicator */}
-        <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 bg-slate-800/80 border border-slate-700/60 rounded-full text-slate-400 text-[11px]">
-          <Lock className="w-3 h-3 text-emerald-400" />
-          <span>Direct Passcode Session</span>
+        {/* WhatsApp Action Icons */}
+        <div className="flex items-center gap-3 text-slate-300">
+          <button title="Start Video Call (Demo)" className="p-2 hover:bg-slate-700/50 rounded-full transition-all">
+            <Video className="w-4 h-4" />
+          </button>
+          <button title="Start Voice Call (Demo)" className="p-2 hover:bg-slate-700/50 rounded-full transition-all">
+            <Phone className="w-4 h-4" />
+          </button>
+          <div className="h-4 w-[1px] bg-slate-700 hidden sm:block" />
+          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/80 border border-slate-700/60 rounded-full text-slate-300 text-[11px]">
+            <Lock className="w-3 h-3 text-emerald-400" />
+            <span>Passcode Encrypted</span>
+          </div>
         </div>
       </div>
 
       {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Welcome Notice */}
-        <div className="text-center my-4">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900/90 border border-slate-800 rounded-full text-[11px] text-slate-400 shadow-sm">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Chatting with <strong>{contact.name}</strong>. No login required.</span>
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#0b141a]">
+        {/* WhatsApp Security Notice */}
+        <div className="text-center my-3">
+          <div className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-[#182229] border border-[#222d34] rounded-lg text-[11px] text-[#8696a0] shadow-sm">
+            <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+            <span>Messages are direct & private to <strong>{contact.name}</strong>. No login required.</span>
           </div>
         </div>
 
         {loading && messages.length === 0 ? (
           <div className="flex justify-center py-8">
-            <div className="w-6 h-6 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
           </div>
         ) : messages.length === 0 ? (
           <div className="text-center py-16 px-4">
-            <div className="w-14 h-14 bg-slate-900 rounded-2xl border border-slate-800 flex items-center justify-center mx-auto mb-3 text-2xl">
+            <div className="w-16 h-16 bg-[#111b21] rounded-full border border-[#222d34] flex items-center justify-center mx-auto mb-3 text-2xl shadow-md">
               💬
             </div>
-            <p className="text-sm font-semibold text-slate-300">No messages yet</p>
-            <p className="text-xs text-slate-500 mt-1">Send a message to start the conversation!</p>
+            <p className="text-sm font-semibold text-slate-200">Say hello to {contact.name}!</p>
+            <p className="text-xs text-slate-400 mt-1">Send a message below to start chatting.</p>
           </div>
         ) : (
           messages.map((msg) => {
@@ -182,15 +190,15 @@ export default function ChatWindow({
                 className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group`}
               >
                 <div
-                  className={`max-w-[85%] sm:max-w-[70%] rounded-2xl p-3 sm:p-3.5 shadow-md ${
+                  className={`max-w-[85%] sm:max-w-[65%] rounded-lg p-2.5 sm:p-3 shadow-md relative ${
                     isMe
-                      ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-br-none'
-                      : 'bg-slate-950 border border-slate-800 text-slate-100 rounded-bl-none'
+                      ? 'bg-[#005c4b] text-slate-100 rounded-tr-none'
+                      : 'bg-[#202c33] text-slate-100 rounded-tl-none border border-[#2a3942]'
                   }`}
                 >
                   {/* Image Attachment */}
                   {msg.image && (
-                    <div className="mb-2 overflow-hidden rounded-xl bg-black/20 border border-white/10">
+                    <div className="mb-2 overflow-hidden rounded-lg bg-black/20 border border-white/10">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={msg.image}
@@ -203,22 +211,22 @@ export default function ChatWindow({
 
                   {/* Message Text */}
                   {msg.text && (
-                    <p className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words">
+                    <p className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words pr-12">
                       {msg.text}
                     </p>
                   )}
 
-                  {/* Timestamp & Read Receipts */}
+                  {/* WhatsApp Timestamp & Read Ticks */}
                   <div
-                    className={`flex items-center justify-end gap-1 text-[10px] mt-1.5 ${
-                      isMe ? 'text-indigo-200' : 'text-slate-500'
+                    className={`flex items-center justify-end gap-1 text-[10px] mt-1 float-right ml-2 ${
+                      isMe ? 'text-emerald-200/90' : 'text-[#8696a0]'
                     }`}
                   >
                     <span>{formatMessageTime(msg.createdAt)}</span>
                     {isMe && (
                       <span>
                         {msg.read ? (
-                          <CheckCheck className="w-3.5 h-3.5 text-sky-300" />
+                          <CheckCheck className="w-3.5 h-3.5 text-[#53bdeb]" />
                         ) : (
                           <Check className="w-3.5 h-3.5 opacity-80" />
                         )}
@@ -233,32 +241,32 @@ export default function ChatWindow({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Selected Image Preview Modal Bar */}
+      {/* Selected Image Preview Bar */}
       {selectedImage && (
-        <div className="p-3 bg-slate-900 border-t border-slate-800 flex items-center justify-between gap-3">
+        <div className="p-3 bg-[#202c33] border-t border-[#2a3942] flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={selectedImage} alt="preview" className="w-12 h-12 rounded-xl object-cover border border-slate-700" />
-            <span className="text-xs text-slate-300 font-medium">Image attached</span>
+            <img src={selectedImage} alt="preview" className="w-12 h-12 rounded-lg object-cover border border-slate-600" />
+            <span className="text-xs text-slate-200 font-medium">Image attached</span>
           </div>
           <button
             onClick={() => setSelectedImage(null)}
-            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl"
+            className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
-      {/* Quick Emoji Bar Toggle */}
+      {/* Quick Emoji Bar */}
       {showEmojiPicker && (
-        <div className="px-4 py-2 bg-slate-900 border-t border-slate-800 flex items-center gap-2 overflow-x-auto">
+        <div className="px-4 py-2 bg-[#111b21] border-t border-[#222d34] flex items-center gap-2 overflow-x-auto">
           {QUICK_EMOJIS.map((emoji) => (
             <button
               key={emoji}
               type="button"
               onClick={() => setText((prev) => prev + emoji)}
-              className="text-lg p-1.5 hover:bg-slate-800 rounded-xl transition-all"
+              className="text-xl p-1.5 hover:bg-[#202c33] rounded-lg transition-all"
             >
               {emoji}
             </button>
@@ -266,8 +274,8 @@ export default function ChatWindow({
         </div>
       )}
 
-      {/* Bottom Input Controls Bar */}
-      <form onSubmit={handleSend} className="p-3 sm:p-4 bg-slate-900 border-t border-slate-800 flex items-end gap-2">
+      {/* WhatsApp Input Bar */}
+      <form onSubmit={handleSend} className="p-3 bg-[#202c33] border-t border-[#2a3942] flex items-end gap-2">
         <input
           type="file"
           ref={fileInputRef}
@@ -279,8 +287,8 @@ export default function ChatWindow({
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          title="Attach Image"
-          className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all shrink-0"
+          title="Attach File / Image"
+          className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
         >
           <ImageIcon className="w-5 h-5" />
         </button>
@@ -289,31 +297,31 @@ export default function ChatWindow({
           type="button"
           onClick={() => setShowEmojiPicker(!showEmojiPicker)}
           title="Emoji Picker"
-          className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all shrink-0"
+          className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
         >
           <Smile className="w-5 h-5" />
         </button>
 
-        <div className="flex-1 bg-slate-800/80 border border-slate-700/80 rounded-2xl px-3 py-2 flex items-center">
+        <div className="flex-1 bg-[#2a3942] border border-[#2a3942] rounded-lg px-3 py-2 flex items-center">
           <textarea
             rows={1}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={`Message ${contact.name}...`}
-            className="w-full bg-transparent text-xs sm:text-sm text-white placeholder:text-slate-500 focus:outline-none resize-none max-h-24 leading-normal"
+            className="w-full bg-transparent text-xs sm:text-sm text-slate-100 placeholder:text-[#8696a0] focus:outline-none resize-none max-h-24 leading-normal"
           />
         </div>
 
         <button
           type="submit"
           disabled={(!text.trim() && !selectedImage) || sending}
-          className="p-3 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 disabled:opacity-40 text-white rounded-2xl shadow-lg shadow-indigo-500/20 transition-all shrink-0 flex items-center justify-center active:scale-95"
+          className="p-3 bg-[#00a884] hover:bg-[#008f70] disabled:opacity-40 text-white rounded-full shadow-md transition-all shrink-0 flex items-center justify-center active:scale-95"
         >
           {sending ? (
             <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
           ) : (
-            <Send className="w-4 h-4" />
+            <Send className="w-4 h-4 fill-current" />
           )}
         </button>
       </form>
@@ -328,7 +336,7 @@ export default function ChatWindow({
             <X className="w-6 h-6" />
           </button>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={previewLightbox} alt="enlarged" className="max-w-full max-h-full rounded-2xl object-contain" />
+          <img src={previewLightbox} alt="enlarged" className="max-w-full max-h-full rounded-xl object-contain" />
         </div>
       )}
     </div>
