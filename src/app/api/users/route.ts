@@ -5,6 +5,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const activeUserId = searchParams.get('userId');
+    const activeContactId = searchParams.get('activeContactId');
 
     if (activeUserId) {
       await updateUser(activeUserId, {
@@ -22,7 +23,7 @@ export async function GET(request: Request) {
       let lastMessage = null;
 
       if (activeUserId) {
-        // Calculate unread messages sent TO activeUserId FROM this user
+        // Find last message in conversation
         const conversationMsgs = db.messages.filter(
           m => (m.senderId === user.id && m.receiverId === activeUserId) ||
                (m.senderId === activeUserId && m.receiverId === user.id)
@@ -32,9 +33,15 @@ export async function GET(request: Request) {
           lastMessage = conversationMsgs[conversationMsgs.length - 1];
         }
 
-        unreadCount = db.messages.filter(
-          m => m.senderId === user.id && m.receiverId === activeUserId && !m.read
-        ).length;
+        // Unread messages sent FROM this contact TO activeUserId
+        // If this contact is currently open on screen (activeContactId === user.id), unread count is 0
+        if (activeContactId && user.id === activeContactId) {
+          unreadCount = 0;
+        } else {
+          unreadCount = db.messages.filter(
+            m => m.senderId === user.id && m.receiverId === activeUserId && !m.read
+          ).length;
+        }
       }
 
       return {

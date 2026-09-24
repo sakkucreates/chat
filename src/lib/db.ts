@@ -319,6 +319,21 @@ export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 
   return newMsg;
 }
 
+// Persist full message list with updated read statuses to Redis
+async function saveKvMessages(messages: Message[]): Promise<boolean> {
+  if (!KV_URL || !KV_TOKEN) return false;
+  try {
+    await executeKvCommand(['DEL', 'chatpass_messages']);
+    for (const m of messages) {
+      await pushKvMessage(m);
+    }
+    return true;
+  } catch (err) {
+    console.warn('saveKvMessages error:', err);
+    return false;
+  }
+}
+
 export async function markMessagesAsRead(senderId: string, receiverId: string): Promise<void> {
   const db = await getDb();
   let updated = false;
@@ -329,6 +344,9 @@ export async function markMessagesAsRead(senderId: string, receiverId: string): 
     }
   });
   if (updated) {
-    await saveDb(db);
+    if (KV_URL && KV_TOKEN) {
+      await saveKvMessages(db.messages).catch(() => false);
+    }
+    await saveDb(db).catch(() => {});
   }
 }

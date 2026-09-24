@@ -132,11 +132,30 @@ export default function HomePage() {
     return () => { ignore = true; };
   }, []);
 
+  // Mark messages as read for active contact
+  const markAsRead = useCallback(async (contactId: string) => {
+    if (!currentUser || !contactId) return;
+    try {
+      await fetch('/api/messages/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderId: contactId,
+          receiverId: currentUser.id
+        }),
+        cache: 'no-store'
+      });
+    } catch {
+      // Ignored
+    }
+  }, [currentUser]);
+
   // Poll Users & Contact List Status
   const fetchUsers = useCallback(async () => {
     if (!currentUser) return;
     try {
-      const res = await fetch(`/api/users?userId=${currentUser.id}`, { cache: 'no-store' });
+      const url = `/api/users?userId=${currentUser.id}${activeContactId ? `&activeContactId=${activeContactId}` : ''}`;
+      const res = await fetch(url, { cache: 'no-store' });
       const data = await res.json();
       if (data.users) {
         setUsers(data.users);
@@ -144,7 +163,7 @@ export default function HomePage() {
     } catch {
       // Ignored
     }
-  }, [currentUser]);
+  }, [currentUser, activeContactId]);
 
   // Poll Conversation Messages (with deduplication & cancellation)
   const fetchMessages = useCallback(async () => {
@@ -169,13 +188,15 @@ export default function HomePage() {
       if (data.messages && !controller.signal.aborted) {
         // Merge & deduplicate incoming messages to PREVENT any message from disappearing
         setMessages((prevMsgs) => mergeMessages(prevMsgs, data.messages));
+        // Auto mark unread messages from active contact as read
+        markAsRead(activeContactId);
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         console.error('Error polling messages:', err);
       }
     }
-  }, [currentUser, activeContactId, mergeMessages]);
+  }, [currentUser, activeContactId, mergeMessages, markAsRead]);
 
   // Periodic user list polling (2.5s)
   useEffect(() => {
@@ -247,6 +268,7 @@ export default function HomePage() {
       }
       setActiveContactId(contact.id);
       setMessages([]);
+      markAsRead(contact.id);
     }
     setMobileView('chat');
   };
