@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import PasscodeModal from '@/components/PasscodeModal';
 import ContactsSidebar from '@/components/ContactsSidebar';
 import ChatWindow from '@/components/ChatWindow';
@@ -17,7 +17,7 @@ export default function HomePage() {
 
   // App Data
   const [users, setUsers] = useState<(User & { unreadCount?: number; lastMessage?: Message | null })[]>([]);
-  const [activeContact, setActiveContact] = useState<User | null>(null);
+  const [activeContactId, setActiveContactId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -25,6 +25,12 @@ export default function HomePage() {
   // Modals & Mobile View State
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [mobileView, setMobileView] = useState<'contacts' | 'chat'>('contacts');
+
+  // Derived Active Contact Object (stable primitive string lookup)
+  const activeContact = useMemo(
+    () => users.find((u) => u.id === activeContactId) || null,
+    [users, activeContactId]
+  );
 
   // Verify Passcode Login
   const handleLogin = async (code: string): Promise<boolean> => {
@@ -57,7 +63,7 @@ export default function HomePage() {
   const handleLogout = () => {
     localStorage.removeItem('chatpass_user_code');
     setCurrentUser(null);
-    setActiveContact(null);
+    setActiveContactId(null);
     setMessages([]);
     setMobileView('contacts');
   };
@@ -96,7 +102,7 @@ export default function HomePage() {
     return () => { ignore = true; };
   }, []);
 
-  // Poll Users & Contact List Status
+  // Poll Users & Contact List Status (Depends strictly on currentUser.id)
   const fetchUsers = useCallback(async () => {
     if (!currentUser) return;
     try {
@@ -104,25 +110,17 @@ export default function HomePage() {
       const data = await res.json();
       if (data.users) {
         setUsers(data.users);
-
-        // Keep active contact object updated
-        if (activeContact) {
-          const updatedContact = data.users.find((u: User) => u.id === activeContact.id);
-          if (updatedContact) {
-            setActiveContact(updatedContact);
-          }
-        }
       }
     } catch {
       // Ignored
     }
-  }, [currentUser, activeContact]);
+  }, [currentUser]);
 
-  // Poll Conversation Messages
+  // Poll Conversation Messages (Depends strictly on activeContactId)
   const fetchMessages = useCallback(async () => {
-    if (!currentUser || !activeContact) return;
+    if (!currentUser || !activeContactId) return;
     try {
-      const res = await fetch(`/api/messages?userId=${currentUser.id}&contactId=${activeContact.id}`);
+      const res = await fetch(`/api/messages?userId=${currentUser.id}&contactId=${activeContactId}`);
       const data = await res.json();
       if (data.messages) {
         setMessages(data.messages);
@@ -130,9 +128,9 @@ export default function HomePage() {
     } catch {
       // Ignored
     }
-  }, [currentUser, activeContact]);
+  }, [currentUser, activeContactId]);
 
-  // Periodic polling timers
+  // Periodic user list polling (2.5s)
   useEffect(() => {
     if (!currentUser) return;
 
@@ -148,11 +146,13 @@ export default function HomePage() {
     };
   }, [currentUser, fetchUsers]);
 
+  // Periodic message polling (1.5s)
   useEffect(() => {
-    if (!currentUser || !activeContact) return;
+    if (!currentUser || !activeContactId) return;
 
     const timer = setTimeout(() => {
-      fetchMessages();
+      setMessagesLoading(true);
+      fetchMessages().finally(() => setMessagesLoading(false));
     }, 0);
 
     const msgInterval = setInterval(fetchMessages, 1500);
@@ -161,10 +161,10 @@ export default function HomePage() {
       clearTimeout(timer);
       clearInterval(msgInterval);
     };
-  }, [currentUser, activeContact, fetchMessages]);
+  }, [currentUser, activeContactId, fetchMessages]);
 
   const handleSendMessage = async (text: string, image?: string) => {
-    if (!currentUser || !activeContact) return;
+    if (!currentUser || !activeContactId) return;
 
     try {
       const res = await fetch('/api/messages', {
@@ -172,7 +172,7 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           senderId: currentUser.id,
-          receiverId: activeContact.id,
+          receiverId: activeContactId,
           text,
           image
         })
@@ -189,7 +189,10 @@ export default function HomePage() {
   };
 
   const handleSelectContact = (contact: User) => {
-    setActiveContact(contact);
+    if (activeContactId !== contact.id) {
+      setActiveContactId(contact.id);
+      setMessages([]);
+    }
     setMobileView('chat');
   };
 
@@ -237,6 +240,7 @@ export default function HomePage() {
         >
           {activeContact ? (
             <ChatWindow
+              key={activeContact.id}
               currentUser={currentUser}
               contact={activeContact}
               messages={messages}
