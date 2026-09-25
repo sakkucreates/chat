@@ -45,6 +45,9 @@ export default function HomePage() {
     );
   }, []);
 
+  // Master Link Gate State
+  const [isLinkUnlocked, setIsLinkUnlocked] = useState<boolean>(false);
+
   // Verify Passcode Login & Update Tab Session State
   const handleLogin = async (code: string): Promise<boolean> => {
     setAuthLoading(true);
@@ -59,13 +62,17 @@ export default function HomePage() {
       const data = await res.json();
 
       if (!res.ok || data.error || !data.user) {
-        setAuthError(data.error || 'Invalid passcode');
+        setAuthError(data.error || 'Invalid password / passcode');
         return false;
+      }
+
+      setIsLinkUnlocked(true);
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('chatpass_link_unlocked', 'true');
       }
 
       setCurrentUser(data.user);
       sessionStorage.setItem('chatpass_user_code', data.user.code);
-      localStorage.setItem('chatpass_user_code', data.user.code);
       return true;
     } catch {
       setAuthError('Connection error. Please try again.');
@@ -88,9 +95,14 @@ export default function HomePage() {
     setMobileView('contacts');
   };
 
-  // Session verification on load (Tab-isolated session: requires login card when opening fresh link)
+  // Session verification on load
   useEffect(() => {
     let ignore = false;
+    const unlocked = typeof window !== 'undefined' ? sessionStorage.getItem('chatpass_link_unlocked') === 'true' : false;
+    if (unlocked) {
+      setIsLinkUnlocked(true);
+    }
+
     const params = new URLSearchParams(window.location.search);
     const codeFromUrl = params.get('code');
     const sessionCode = typeof window !== 'undefined' ? sessionStorage.getItem('chatpass_user_code') : null;
@@ -108,6 +120,10 @@ export default function HomePage() {
         .then((data) => {
           if (!ignore) {
             if (data.success && data.user) {
+              setIsLinkUnlocked(true);
+              if (typeof window !== 'undefined') {
+                sessionStorage.setItem('chatpass_link_unlocked', 'true');
+              }
               setCurrentUser(data.user);
               sessionStorage.setItem('chatpass_user_code', data.user.code);
               if (codeFromUrl && typeof window !== 'undefined') {
@@ -280,9 +296,14 @@ export default function HomePage() {
     );
   }
 
-  // Passcode Auth Screen if not logged in
+  // Master Link Gate Screen (Mode A: Password format when visiting link for first time)
+  if (!isLinkUnlocked) {
+    return <PasscodeModal mode="gate" onLogin={handleLogin} loading={authLoading} error={authError} />;
+  }
+
+  // Account Switcher Screen (Mode B: Account Selection format when logged out or switching accounts)
   if (!currentUser) {
-    return <PasscodeModal onLogin={handleLogin} loading={authLoading} error={authError} />;
+    return <PasscodeModal mode="switcher" onLogin={handleLogin} loading={authLoading} error={authError} />;
   }
 
   return (
