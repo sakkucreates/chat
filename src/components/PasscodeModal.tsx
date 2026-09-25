@@ -72,13 +72,6 @@ export default function PasscodeModal({ onLogin, loading, error }: PasscodeModal
             </span>
           </div>
         </div>
-
-        {/* Password Hint */}
-        <div className="mt-5 pt-3 border-t border-gray-200/80 w-full text-center">
-          <p className="text-[11px] text-gray-400">
-            Password: <span className="font-mono text-indigo-600 font-semibold">@2021</span>
-          </p>
-        </div>
       </div>
     </div>
   );
