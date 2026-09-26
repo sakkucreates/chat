@@ -311,6 +311,12 @@ export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 
     read: false
   };
 
+  if (memoryStore && Array.isArray(memoryStore.messages)) {
+    if (!memoryStore.messages.some(m => m.id === newMsg.id)) {
+      memoryStore.messages.push(newMsg);
+    }
+  }
+
   if (KV_URL && KV_TOKEN) {
     // Atomic Redis List Append
     await pushKvMessage(newMsg);

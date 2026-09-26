@@ -274,14 +274,26 @@ export default function HomePage() {
     }
   };
 
-  const handleSelectContact = (contact: User) => {
+  const handleSelectContact = async (contact: User) => {
     if (activeContactId !== contact.id) {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
       setActiveContactId(contact.id);
-      setMessages([]);
+      setMessagesLoading(true);
       markAsRead(contact.id);
+
+      try {
+        const res = await fetch(`/api/messages?userId=${currentUser?.id}&contactId=${contact.id}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (data.messages) {
+          setMessages(data.messages);
+        }
+      } catch {
+        // Ignored
+      } finally {
+        setMessagesLoading(false);
+      }
     }
     setMobileView('chat');
   };
