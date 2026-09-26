@@ -293,6 +293,25 @@ export default function HomePage() {
     if (!currentUser || !activeContactId || sendingRef.current) return;
     sendingRef.current = true;
 
+    // Create instant optimistic message for 0ms sending experience
+    const tempId = `temp_msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const optimisticMsg: Message = {
+      id: tempId,
+      senderId: currentUser.id,
+      receiverId: activeContactId,
+      text: text ? text.trim() : '',
+      image: image || undefined,
+      createdAt: new Date().toISOString(),
+      read: false
+    };
+
+    // Render message instantly in UI (0ms delay!)
+    setMessages((prev) => {
+      const merged = mergeMessages(prev, [optimisticMsg]);
+      setCachedMessages(currentUser.id, activeContactId, merged);
+      return merged;
+    });
+
     try {
       const res = await fetch('/api/messages', {
         method: 'POST',
@@ -309,7 +328,9 @@ export default function HomePage() {
       const data = await res.json();
       if (data.message) {
         setMessages((prev) => {
-          const merged = mergeMessages(prev, [data.message]);
+          // Replace optimistic message with confirmed server message
+          const filtered = prev.filter((m) => m.id !== tempId);
+          const merged = mergeMessages(filtered, [data.message]);
           setCachedMessages(currentUser.id, activeContactId, merged);
           return merged;
         });

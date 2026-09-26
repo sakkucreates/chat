@@ -319,25 +319,38 @@ export async function getConversationMessages(user1Id: string, user2Id: string):
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
 
-// Atomic Message Creation (with 3-second deduplication lock to prevent 2-5x duplicate messages)
+// In-memory signature lock map to prevent duplicate requests without HTTP REST roundtrip
+const recentSentSignatures = new Map<string, number>();
+
+// Atomic Message Creation (Ultra-fast single REST execution with memory signature lock)
 export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 'read'>): Promise<Message> {
-  const allMessages = (KV_URL && KV_TOKEN) ? (await getKvMessages()) || [] : (await getDb()).messages;
-
+  const textTrim = (msgData.text || '').trim();
+  const imgStr = msgData.image || '';
   const now = Date.now();
-  const existingDuplicate = allMessages.find(m =>
-    m.senderId === msgData.senderId &&
-    m.receiverId === msgData.receiverId &&
-    (m.text || '').trim() === (msgData.text || '').trim() &&
-    (m.image || '') === (msgData.image || '') &&
-    Math.abs(now - new Date(m.createdAt).getTime()) < 3000
-  );
+  const sig = `${msgData.senderId}_${msgData.receiverId}_${textTrim}_${imgStr}`;
 
-  if (existingDuplicate) {
-    return existingDuplicate;
+  // Fast In-Memory Deduplication Check (3-second window)
+  const lastSentTime = recentSentSignatures.get(sig);
+  if (lastSentTime && (now - lastSentTime < 3000)) {
+    if (memoryStore && Array.isArray(memoryStore.messages)) {
+      const match = memoryStore.messages.find(m =>
+        m.senderId === msgData.senderId &&
+        m.receiverId === msgData.receiverId &&
+        (m.text || '').trim() === textTrim &&
+        (m.image || '') === imgStr
+      );
+      if (match) return match;
+    }
+  }
+
+  recentSentSignatures.set(sig, now);
+  if (recentSentSignatures.size > 200) {
+    recentSentSignatures.clear();
   }
 
   const newMsg: Message = {
     ...msgData,
+    text: textTrim,
     id: 'msg_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now(),
     createdAt: new Date().toISOString(),
     read: false
@@ -350,7 +363,7 @@ export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 
   }
 
   if (KV_URL && KV_TOKEN) {
-    // Atomic Redis List Append
+    // Single fast Redis RPUSH call
     await pushKvMessage(newMsg);
   } else {
     // Local File / In-memory append
