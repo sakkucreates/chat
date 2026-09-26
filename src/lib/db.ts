@@ -103,14 +103,31 @@ async function saveKvUsers(users: User[]): Promise<boolean> {
   return res !== null;
 }
 
-// ATOMIC Redis List Read via LRANGE (reads all stored messages atomically)
+// ATOMIC Redis List Read via LRANGE (reads all stored messages atomically with deduplication)
 async function getKvMessages(): Promise<Message[] | null> {
   const result = await executeKvCommand(['LRANGE', 'chatpass_messages', '0', '-1']);
   if (Array.isArray(result)) {
     try {
-      return result
+      const parsed = result
         .map((item: any) => (typeof item === 'string' ? JSON.parse(item) : item))
-        .filter((m: any) => m && typeof m === 'object' && m.id);
+        .filter((m: any) => m && typeof m === 'object' && m.id && m.senderId && m.receiverId);
+
+      // Deduplicate by ID and content signature (sender + receiver + text + image + 3-sec window)
+      const seenIds = new Set<string>();
+      const seenSignatures = new Set<string>();
+      const uniqueMessages: Message[] = [];
+
+      for (const m of parsed) {
+        const timeBucket = Math.floor(new Date(m.createdAt).getTime() / 3000);
+        const sig = `${m.senderId}_${m.receiverId}_${(m.text || '').trim()}_${m.image || ''}_${timeBucket}`;
+
+        if (!seenIds.has(m.id) && !seenSignatures.has(sig)) {
+          seenIds.add(m.id);
+          seenSignatures.add(sig);
+          uniqueMessages.push(m);
+        }
+      }
+      return uniqueMessages;
     } catch {
       return null;
     }
@@ -302,8 +319,23 @@ export async function getConversationMessages(user1Id: string, user2Id: string):
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
 
-// Atomic Message Creation (uses Redis RPUSH to guarantee concurrent append safety without blob overwrites)
+// Atomic Message Creation (with 3-second deduplication lock to prevent 2-5x duplicate messages)
 export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 'read'>): Promise<Message> {
+  const allMessages = (KV_URL && KV_TOKEN) ? (await getKvMessages()) || [] : (await getDb()).messages;
+
+  const now = Date.now();
+  const existingDuplicate = allMessages.find(m =>
+    m.senderId === msgData.senderId &&
+    m.receiverId === msgData.receiverId &&
+    (m.text || '').trim() === (msgData.text || '').trim() &&
+    (m.image || '') === (msgData.image || '') &&
+    Math.abs(now - new Date(m.createdAt).getTime()) < 3000
+  );
+
+  if (existingDuplicate) {
+    return existingDuplicate;
+  }
+
   const newMsg: Message = {
     ...msgData,
     id: 'msg_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now(),

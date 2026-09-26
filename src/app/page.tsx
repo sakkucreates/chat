@@ -28,6 +28,7 @@ export default function HomePage() {
 
   // Ref to track in-flight message polling AbortController
   const abortControllerRef = useRef<AbortController | null>(null);
+  const sendingRef = useRef<boolean>(false);
 
   // Derived Active Contact Object (stable primitive string lookup)
   const activeContact = useMemo(
@@ -35,11 +36,46 @@ export default function HomePage() {
     [users, activeContactId]
   );
 
-  // Helper function to safely merge & deduplicate messages by ID, sorting chronologically
+  // Helper to load & save cached messages per conversation (0ms instant display)
+  const getCachedMessages = useCallback((userId: string, contactId: string): Message[] => {
+    if (typeof window === 'undefined' || !userId || !contactId) return [];
+    try {
+      const cached = sessionStorage.getItem(`chatpass_cache_msgs_${userId}_${contactId}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        return Array.isArray(parsed) ? parsed : [];
+      }
+    } catch {
+      // Ignored
+    }
+    return [];
+  }, []);
+
+  const setCachedMessages = useCallback((userId: string, contactId: string, msgs: Message[]) => {
+    if (typeof window === 'undefined' || !userId || !contactId) return;
+    try {
+      sessionStorage.setItem(`chatpass_cache_msgs_${userId}_${contactId}`, JSON.stringify(msgs));
+    } catch {
+      // Ignored
+    }
+  }, []);
+
+  // Helper function to safely merge & deduplicate messages by ID and content signature
   const mergeMessages = useCallback((existingMsgs: Message[], incomingMsgs: Message[]): Message[] => {
     const map = new Map<string, Message>();
-    existingMsgs.forEach((m) => map.set(m.id, m));
-    incomingMsgs.forEach((m) => map.set(m.id, m));
+    const seenSigs = new Set<string>();
+
+    [...existingMsgs, ...incomingMsgs].forEach((m) => {
+      if (!m || !m.id) return;
+      const timeBucket = Math.floor(new Date(m.createdAt).getTime() / 3000);
+      const sig = `${m.senderId}_${m.receiverId}_${(m.text || '').trim()}_${m.image || ''}_${timeBucket}`;
+      
+      if (!seenSigs.has(sig)) {
+        seenSigs.add(sig);
+        map.set(m.id, m);
+      }
+    });
+
     return Array.from(map.values()).sort(
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     );
@@ -178,11 +214,10 @@ export default function HomePage() {
     }
   }, [currentUser, activeContactId]);
 
-  // Poll Conversation Messages (with deduplication & cancellation)
+  // Poll Conversation Messages (with deduplication, caching & cancellation)
   const fetchMessages = useCallback(async () => {
     if (!currentUser || !activeContactId) return;
 
-    // Abort previous in-flight request if present
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -199,9 +234,11 @@ export default function HomePage() {
       );
       const data = await res.json();
       if (data.messages && !controller.signal.aborted) {
-        // Merge & deduplicate incoming messages to PREVENT any message from disappearing
-        setMessages((prevMsgs) => mergeMessages(prevMsgs, data.messages));
-        // Auto mark unread messages from active contact as read
+        setMessages((prevMsgs) => {
+          const merged = mergeMessages(prevMsgs, data.messages);
+          setCachedMessages(currentUser.id, activeContactId, merged);
+          return merged;
+        });
         markAsRead(activeContactId);
       }
     } catch (err: any) {
@@ -209,7 +246,7 @@ export default function HomePage() {
         console.error('Error polling messages:', err);
       }
     }
-  }, [currentUser, activeContactId, mergeMessages, markAsRead]);
+  }, [currentUser, activeContactId, mergeMessages, markAsRead, setCachedMessages]);
 
   // Periodic user list polling (2.5s)
   useEffect(() => {
@@ -231,10 +268,16 @@ export default function HomePage() {
   useEffect(() => {
     if (!currentUser || !activeContactId) return;
 
-    const timer = setTimeout(() => {
+    // Load cached messages instantly (0ms delay on refresh)
+    const cached = getCachedMessages(currentUser.id, activeContactId);
+    if (cached.length > 0) {
+      setMessages(cached);
+      setMessagesLoading(false);
+    } else {
       setMessagesLoading(true);
-      fetchMessages().finally(() => setMessagesLoading(false));
-    }, 0);
+    }
+
+    fetchMessages().finally(() => setMessagesLoading(false));
 
     const msgInterval = setInterval(fetchMessages, 1500);
 
@@ -242,13 +285,13 @@ export default function HomePage() {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
-      clearTimeout(timer);
       clearInterval(msgInterval);
     };
-  }, [currentUser, activeContactId, fetchMessages]);
+  }, [currentUser, activeContactId, fetchMessages, getCachedMessages]);
 
   const handleSendMessage = async (text: string, image?: string) => {
-    if (!currentUser || !activeContactId) return;
+    if (!currentUser || !activeContactId || sendingRef.current) return;
+    sendingRef.current = true;
 
     try {
       const res = await fetch('/api/messages', {
@@ -265,12 +308,17 @@ export default function HomePage() {
 
       const data = await res.json();
       if (data.message) {
-        // Safely add server-returned message using Map deduplication
-        setMessages((prev) => mergeMessages(prev, [data.message]));
+        setMessages((prev) => {
+          const merged = mergeMessages(prev, [data.message]);
+          setCachedMessages(currentUser.id, activeContactId, merged);
+          return merged;
+        });
         fetchUsers();
       }
     } catch {
       // Ignored
+    } finally {
+      sendingRef.current = false;
     }
   };
 
@@ -280,14 +328,25 @@ export default function HomePage() {
         abortControllerRef.current.abort();
       }
       setActiveContactId(contact.id);
-      setMessagesLoading(true);
+
+      // Load cached messages instantly (0ms delay!)
+      const cached = getCachedMessages(currentUser?.id || '', contact.id);
+      if (cached.length > 0) {
+        setMessages(cached);
+        setMessagesLoading(false);
+      } else {
+        setMessagesLoading(true);
+      }
+
       markAsRead(contact.id);
 
       try {
         const res = await fetch(`/api/messages?userId=${currentUser?.id}&contactId=${contact.id}`, { cache: 'no-store' });
         const data = await res.json();
         if (data.messages) {
-          setMessages(data.messages);
+          const merged = mergeMessages(cached, data.messages);
+          setMessages(merged);
+          setCachedMessages(currentUser?.id || '', contact.id, merged);
         }
       } catch {
         // Ignored
