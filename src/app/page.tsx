@@ -5,10 +5,14 @@ import PasscodeModal from '@/components/PasscodeModal';
 import ContactsSidebar from '@/components/ContactsSidebar';
 import ChatWindow from '@/components/ChatWindow';
 import AdminDashboard from '@/components/AdminDashboard';
+import BeautyWebsite from '@/components/BeautyWebsite';
 import { User, Message } from '@/lib/db';
 import { MessageSquare, Shield } from 'lucide-react';
 
 export default function HomePage() {
+  // Disguise Mode (@1234 password trigger)
+  const [isDisguiseMode, setIsDisguiseMode] = useState<boolean>(false);
+
   // Current Authenticated User Session for this browser tab
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
@@ -88,11 +92,22 @@ export default function HomePage() {
   const handleLogin = async (code: string): Promise<boolean> => {
     setAuthLoading(true);
     setAuthError(null);
+
+    const trimmedCode = code.trim();
+    if (trimmedCode === '@1234' || trimmedCode === '1234') {
+      setIsDisguiseMode(true);
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('chatpass_disguise', 'true');
+      }
+      setAuthLoading(false);
+      return true;
+    }
+
     try {
       const res = await fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code: trimmedCode }),
         cache: 'no-store'
       });
       const data = await res.json();
@@ -100,6 +115,11 @@ export default function HomePage() {
       if (!res.ok || data.error || !data.user) {
         setAuthError(data.error || 'Invalid password / passcode');
         return false;
+      }
+
+      setIsDisguiseMode(false);
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('chatpass_disguise');
       }
 
       setIsLinkUnlocked(true);
@@ -124,6 +144,7 @@ export default function HomePage() {
       abortControllerRef.current.abort();
     }
     sessionStorage.removeItem('chatpass_user_code');
+    sessionStorage.removeItem('chatpass_disguise');
     localStorage.removeItem('chatpass_user_code');
     setCurrentUser(null);
     setActiveContactId(null);
@@ -134,6 +155,11 @@ export default function HomePage() {
   // Session verification on load
   useEffect(() => {
     let ignore = false;
+    const disguise = typeof window !== 'undefined' ? sessionStorage.getItem('chatpass_disguise') === 'true' : false;
+    if (disguise) {
+      setIsDisguiseMode(true);
+    }
+
     const unlocked = typeof window !== 'undefined' ? sessionStorage.getItem('chatpass_link_unlocked') === 'true' : false;
     if (unlocked) {
       setIsLinkUnlocked(true);
@@ -145,7 +171,7 @@ export default function HomePage() {
 
     const codeToVerify = codeFromUrl || sessionCode;
 
-    if (codeToVerify) {
+    if (codeToVerify && !disguise) {
       fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -404,6 +430,20 @@ export default function HomePage() {
         <div className="w-10 h-10 border-3 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mb-4" />
         <p className="text-xs text-slate-400 font-medium">Connecting to ChatPass...</p>
       </div>
+    );
+  }
+
+  // Disguise Screen (@1234 password trigger renders Premium Beauty Website)
+  if (isDisguiseMode) {
+    return (
+      <BeautyWebsite
+        onReset={() => {
+          setIsDisguiseMode(false);
+          if (typeof window !== 'undefined') {
+            sessionStorage.removeItem('chatpass_disguise');
+          }
+        }}
+      />
     );
   }
 
