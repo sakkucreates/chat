@@ -409,3 +409,22 @@ export async function markMessagesAsRead(senderId: string, receiverId: string): 
     await saveDb(db).catch(() => {});
   }
 }
+
+export async function clearConversationMessages(user1Id: string, user2Id: string): Promise<boolean> {
+  const db = await getDb();
+  db.messages = db.messages.filter(
+    m => !((m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id))
+  );
+
+  if (memoryStore && Array.isArray(memoryStore.messages)) {
+    memoryStore.messages = memoryStore.messages.filter(
+      m => !((m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id))
+    );
+  }
+
+  if (KV_URL && KV_TOKEN) {
+    await saveKvMessages(db.messages).catch(() => false);
+  }
+  await saveDb(db).catch(() => {});
+  return true;
+}

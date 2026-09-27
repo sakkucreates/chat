@@ -13,7 +13,8 @@ import {
   Lock,
   Phone,
   Video,
-  MoreVertical
+  MoreVertical,
+  Trash2
 } from 'lucide-react';
 import { User, Message } from '@/lib/db';
 
@@ -22,6 +23,7 @@ interface ChatWindowProps {
   contact: User;
   messages: Message[];
   onSendMessage: (text: string, image?: string) => Promise<void>;
+  onClearChat?: () => Promise<void>;
   onBack: () => void;
   loading: boolean;
 }
@@ -33,6 +35,7 @@ export default function ChatWindow({
   contact,
   messages,
   onSendMessage,
+  onClearChat,
   onBack,
   loading
 }: ChatWindowProps) {
@@ -41,6 +44,8 @@ export default function ChatWindow({
   const [sending, setSending] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [previewLightbox, setPreviewLightbox] = useState<string | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -143,13 +148,23 @@ export default function ChatWindow({
         </div>
 
         {/* WhatsApp Action Icons */}
-        <div className="flex items-center gap-3 text-slate-300">
+        <div className="flex items-center gap-2 text-slate-300">
           <button title="Start Video Call (Demo)" className="p-2 hover:bg-slate-700/50 rounded-full transition-all">
             <Video className="w-4 h-4" />
           </button>
           <button title="Start Voice Call (Demo)" className="p-2 hover:bg-slate-700/50 rounded-full transition-all">
             <Phone className="w-4 h-4" />
           </button>
+          {onClearChat && (
+            <button
+              onClick={() => setShowClearConfirm(true)}
+              title="Clear Chat for Safety"
+              className="p-2 hover:bg-rose-500/20 text-slate-300 hover:text-rose-400 rounded-full transition-all flex items-center gap-1 text-xs"
+            >
+              <Trash2 className="w-4 h-4 text-rose-400" />
+              <span className="hidden sm:inline font-medium">Clear Chat</span>
+            </button>
+          )}
           <div className="h-4 w-[1px] bg-slate-700 hidden sm:block" />
           <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/80 border border-slate-700/60 rounded-full text-slate-300 text-[11px]">
             <Lock className="w-3 h-3 text-emerald-400" />
@@ -337,6 +352,51 @@ export default function ChatWindow({
           </button>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={previewLightbox} alt="enlarged" className="max-w-full max-h-full rounded-xl object-contain" />
+        </div>
+      )}
+
+      {/* Clear Chat Confirmation Modal */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="w-full max-w-sm bg-[#111b21] border border-[#222d34] rounded-2xl p-6 text-center shadow-2xl">
+            <div className="w-12 h-12 bg-rose-500/20 rounded-full flex items-center justify-center mx-auto mb-3 text-rose-400 border border-rose-500/30">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-100 mb-2">Clear Chat History?</h3>
+            <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+              Are you sure you want to clear all messages with <strong>{contact.name}</strong>? This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                disabled={clearing}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (onClearChat) {
+                    setClearing(true);
+                    try {
+                      await onClearChat();
+                    } finally {
+                      setClearing(false);
+                      setShowClearConfirm(false);
+                    }
+                  }
+                }}
+                disabled={clearing}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5"
+              >
+                {clearing ? (
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  'Clear Chat'
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

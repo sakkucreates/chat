@@ -256,7 +256,7 @@ export default function HomePage() {
       fetchUsers();
     }, 0);
 
-    const userInterval = setInterval(fetchUsers, 2500);
+    const userInterval = setInterval(fetchUsers, 2000);
 
     return () => {
       clearTimeout(timer);
@@ -264,7 +264,7 @@ export default function HomePage() {
     };
   }, [currentUser, fetchUsers]);
 
-  // Periodic message polling (1.5s) with cleanup
+  // Periodic message polling (1.0s fast interval) with cleanup
   useEffect(() => {
     if (!currentUser || !activeContactId) return;
 
@@ -279,7 +279,7 @@ export default function HomePage() {
 
     fetchMessages().finally(() => setMessagesLoading(false));
 
-    const msgInterval = setInterval(fetchMessages, 1500);
+    const msgInterval = setInterval(fetchMessages, 1000);
 
     return () => {
       if (abortControllerRef.current) {
@@ -288,6 +288,25 @@ export default function HomePage() {
       clearInterval(msgInterval);
     };
   }, [currentUser, activeContactId, fetchMessages, getCachedMessages]);
+
+  const handleClearChat = async () => {
+    if (!currentUser || !activeContactId) return;
+    try {
+      await fetch('/api/messages/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: currentUser.id, contactId: activeContactId }),
+        cache: 'no-store'
+      });
+      setMessages([]);
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem(`chatpass_cache_msgs_${currentUser.id}_${activeContactId}`);
+      }
+      fetchUsers();
+    } catch (err) {
+      console.error('Failed to clear chat:', err);
+    }
+  };
 
   const handleSendMessage = async (text: string, image?: string) => {
     if (!currentUser || !activeContactId || sendingRef.current) return;
@@ -432,6 +451,7 @@ export default function HomePage() {
               contact={activeContact}
               messages={messages}
               onSendMessage={handleSendMessage}
+              onClearChat={handleClearChat}
               onBack={() => setMobileView('contacts')}
               loading={messagesLoading}
             />
