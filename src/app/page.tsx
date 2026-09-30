@@ -143,6 +143,13 @@ export default function HomePage() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
+    if (currentUser) {
+      fetch('/api/users/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: currentUser.id, status: 'offline' })
+      }).catch(() => {});
+    }
     sessionStorage.removeItem('chatpass_user_code');
     sessionStorage.removeItem('chatpass_disguise');
     localStorage.removeItem('chatpass_user_code');
@@ -289,6 +296,30 @@ export default function HomePage() {
       clearInterval(userInterval);
     };
   }, [currentUser, fetchUsers]);
+
+  // Tab Unload / Close Beacon (Instantly marks user offline when closing tab or navigating away)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const markOffline = () => {
+      const payload = JSON.stringify({ userId: currentUser.id, status: 'offline' });
+      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        navigator.sendBeacon('/api/users/status', payload);
+      } else {
+        fetch('/api/users/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+          keepalive: true
+        }).catch(() => {});
+      }
+    };
+
+    window.addEventListener('beforeunload', markOffline);
+    return () => {
+      window.removeEventListener('beforeunload', markOffline);
+    };
+  }, [currentUser]);
 
   // Periodic message polling (1.0s fast interval) with cleanup
   useEffect(() => {

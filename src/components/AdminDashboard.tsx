@@ -455,6 +455,16 @@ export default function AdminDashboard({ onClose, onSelectUserForChat }: AdminDa
                               Admin
                             </span>
                           )}
+                          {u.status === 'online' ? (
+                            <span className="bg-emerald-500/20 text-emerald-400 text-[10px] px-2 py-0.5 rounded-full font-medium border border-emerald-500/30 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                              <span>Online</span>
+                            </span>
+                          ) : (
+                            <span className="bg-slate-700/50 text-slate-400 text-[10px] px-2 py-0.5 rounded-full font-medium border border-slate-600/30">
+                              Offline
+                            </span>
+                          )}
                         </div>
                         <p className="text-xs text-slate-400 flex items-center gap-2">
                           <span>Code: <strong className="font-mono text-emerald-400">{u.code}</strong></span>

@@ -267,7 +267,18 @@ export async function getUserById(id: string): Promise<User | null> {
 export async function getAllUsers(): Promise<User[]> {
   try {
     const db = await getDb();
-    return db.users || INITIAL_DATA.users;
+    const rawUsers = db.users || INITIAL_DATA.users;
+    const now = Date.now();
+
+    // Dynamically calculate online/offline status based on lastSeen heartbeat (6-second threshold)
+    return rawUsers.map((user) => {
+      const lastSeenTime = user.lastSeen ? new Date(user.lastSeen).getTime() : 0;
+      const isOnline = (now - lastSeenTime) < 6000;
+      return {
+        ...user,
+        status: isOnline ? 'online' : 'offline'
+      };
+    });
   } catch {
     return INITIAL_DATA.users;
   }
