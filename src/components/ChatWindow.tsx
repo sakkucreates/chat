@@ -141,7 +141,7 @@ export default function ChatWindow({
               {contact.status === 'online' ? (
                 <span>online</span>
               ) : (
-                <span className="text-slate-400">offline • Code: {contact.code}</span>
+                <span className="text-slate-400">offline</span>
               )}
             </p>
           </div>

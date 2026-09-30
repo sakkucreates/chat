@@ -66,9 +66,9 @@ export default function ContactsSidebar({
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
-              <span>Code:</span>
-              <strong className="font-mono text-emerald-400">{currentUser.code}</strong>
+            <p className="text-[11px] text-emerald-400 font-medium flex items-center gap-1 mt-0.5">
+              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+              <span>Online</span>
             </p>
           </div>
         </div>
