@@ -263,7 +263,7 @@ export default function ChatWindow({
                 }}
               >
                 {/* Message bubble row with hover arrow */}
-                <div className={`flex items-end gap-1.5 w-full ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                <div className={`flex items-end gap-1.5 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
                   <div
                     className={`max-w-[85%] sm:max-w-[65%] rounded-lg p-2.5 sm:p-3 shadow-md relative ${
                       isMe
@@ -286,7 +286,7 @@ export default function ChatWindow({
 
                     {/* Message Text */}
                     {msg.text && (
-                      <p className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words pr-2">
+                      <p className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words">
                         {msg.text}
                       </p>
                     )}
