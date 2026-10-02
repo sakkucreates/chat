@@ -21,6 +21,7 @@ export interface Message {
   image?: string;
   createdAt: string;
   read: boolean;
+  reactions?: { emoji: string; userId: string }[];
 }
 
 export interface DatabaseSchema {
@@ -439,3 +440,48 @@ export async function clearConversationMessages(user1Id: string, user2Id: string
   await saveDb(db).catch(() => {});
   return true;
 }
+
+// Add or toggle an emoji reaction on a message
+export async function addReactionToMessage(
+  messageId: string,
+  userId: string,
+  emoji: string
+): Promise<Message | null> {
+  const db = await getDb();
+  const index = db.messages.findIndex(m => m.id === messageId);
+  if (index === -1) return null;
+
+  const msg = db.messages[index];
+  const reactions = msg.reactions ? [...msg.reactions] : [];
+
+  const existingIndex = reactions.findIndex(r => r.userId === userId && r.emoji === emoji);
+  if (existingIndex !== -1) {
+    // Toggle off: remove this reaction
+    reactions.splice(existingIndex, 1);
+  } else {
+    // Replace any existing reaction from same user (one reaction per user per message)
+    const sameUserIndex = reactions.findIndex(r => r.userId === userId);
+    if (sameUserIndex !== -1) {
+      reactions[sameUserIndex] = { emoji, userId };
+    } else {
+      reactions.push({ emoji, userId });
+    }
+  }
+
+  db.messages[index] = { ...msg, reactions };
+
+  if (memoryStore && Array.isArray(memoryStore.messages)) {
+    const memIdx = memoryStore.messages.findIndex(m => m.id === messageId);
+    if (memIdx !== -1) {
+      memoryStore.messages[memIdx] = { ...memoryStore.messages[memIdx], reactions };
+    }
+  }
+
+  if (KV_URL && KV_TOKEN) {
+    await saveKvMessages(db.messages).catch(() => false);
+  }
+  await saveDb(db).catch(() => {});
+
+  return db.messages[index];
+}
+

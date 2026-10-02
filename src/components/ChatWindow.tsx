@@ -14,7 +14,8 @@ import {
   Phone,
   Video,
   MoreVertical,
-  Trash2
+  Trash2,
+  ChevronDown
 } from 'lucide-react';
 import { User, Message } from '@/lib/db';
 
@@ -29,6 +30,7 @@ interface ChatWindowProps {
 }
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '🔥', '🎉', '👋', '🙏', '✨', '😊', '😍', '🙌', '💯'];
+const REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
 
 export default function ChatWindow({
   currentUser,
@@ -46,9 +48,50 @@ export default function ChatWindow({
   const [previewLightbox, setPreviewLightbox] = useState<string | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
+  const [localReactions, setLocalReactions] = useState<Record<string, { emoji: string; userId: string }[]>>({});
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Seed localReactions from messages on first load
+  useEffect(() => {
+    const map: Record<string, { emoji: string; userId: string }[]> = {};
+    messages.forEach(m => {
+      if (m.reactions && m.reactions.length > 0) {
+        map[m.id] = m.reactions;
+      }
+    });
+    setLocalReactions(map);
+  }, [messages]);
+
+  const handleReact = async (msgId: string, emoji: string) => {
+    const prev = localReactions[msgId] || [];
+    const existingIdx = prev.findIndex(r => r.userId === currentUser.id && r.emoji === emoji);
+    let next: { emoji: string; userId: string }[];
+    if (existingIdx !== -1) {
+      next = prev.filter((_, i) => i !== existingIdx);
+    } else {
+      const sameUser = prev.findIndex(r => r.userId === currentUser.id);
+      if (sameUser !== -1) {
+        next = prev.map((r, i) => i === sameUser ? { emoji, userId: currentUser.id } : r);
+      } else {
+        next = [...prev, { emoji, userId: currentUser.id }];
+      }
+    }
+    setLocalReactions(r => ({ ...r, [msgId]: next }));
+    setActiveReactionMsgId(null);
+    try {
+      await fetch('/api/messages/react', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: msgId, userId: currentUser.id, emoji }),
+        cache: 'no-store'
+      });
+    } catch {
+      // Ignored
+    }
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -198,57 +241,121 @@ export default function ChatWindow({
         ) : (
           messages.map((msg) => {
             const isMe = msg.senderId === currentUser.id;
+            const msgReactions = localReactions[msg.id] || [];
+            const isReactionOpen = activeReactionMsgId === msg.id;
+
+            // Group reactions by emoji for display
+            const reactionGroups: Record<string, { count: number; myReaction: boolean }> = {};
+            msgReactions.forEach(r => {
+              if (!reactionGroups[r.emoji]) reactionGroups[r.emoji] = { count: 0, myReaction: false };
+              reactionGroups[r.emoji].count++;
+              if (r.userId === currentUser.id) reactionGroups[r.emoji].myReaction = true;
+            });
 
             return (
               <div
                 key={msg.id}
-                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group`}
+                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group mb-1`}
               >
-                <div
-                  className={`max-w-[85%] sm:max-w-[65%] rounded-lg p-2.5 sm:p-3 shadow-md relative ${
-                    isMe
-                      ? 'bg-[#005c4b] text-slate-100 rounded-tr-none'
-                      : 'bg-[#202c33] text-slate-100 rounded-tl-none border border-[#2a3942]'
-                  }`}
-                >
-                  {/* Image Attachment */}
-                  {msg.image && (
-                    <div className="mb-2 overflow-hidden rounded-lg bg-black/20 border border-white/10">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={msg.image}
-                        alt="attachment"
-                        onClick={() => setPreviewLightbox(msg.image!)}
-                        className="max-h-60 w-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
-                      />
-                    </div>
-                  )}
-
-                  {/* Message Text */}
-                  {msg.text && (
-                    <p className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words pr-12">
-                      {msg.text}
-                    </p>
-                  )}
-
-                  {/* WhatsApp Timestamp & Read Ticks */}
+                {/* Message bubble row with hover arrow */}
+                <div className={`flex items-end gap-1.5 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
                   <div
-                    className={`flex items-center justify-end gap-1 text-[10px] mt-1 float-right ml-2 ${
-                      isMe ? 'text-emerald-200/90' : 'text-[#8696a0]'
+                    className={`max-w-[85%] sm:max-w-[65%] rounded-lg p-2.5 sm:p-3 shadow-md relative ${
+                      isMe
+                        ? 'bg-[#005c4b] text-slate-100 rounded-tr-none'
+                        : 'bg-[#202c33] text-slate-100 rounded-tl-none border border-[#2a3942]'
                     }`}
                   >
-                    <span>{formatMessageTime(msg.createdAt)}</span>
-                    {isMe && (
-                      <span>
-                        {msg.read ? (
-                          <CheckCheck className="w-3.5 h-3.5 text-[#53bdeb]" />
-                        ) : (
-                          <Check className="w-3.5 h-3.5 opacity-80" />
-                        )}
-                      </span>
+                    {/* Image Attachment */}
+                    {msg.image && (
+                      <div className="mb-2 overflow-hidden rounded-lg bg-black/20 border border-white/10">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={msg.image}
+                          alt="attachment"
+                          onClick={() => setPreviewLightbox(msg.image!)}
+                          className="max-h-60 w-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
+                        />
+                      </div>
+                    )}
+
+                    {/* Message Text */}
+                    {msg.text && (
+                      <p className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words pr-12">
+                        {msg.text}
+                      </p>
+                    )}
+
+                    {/* WhatsApp Timestamp & Read Ticks */}
+                    <div
+                      className={`flex items-center justify-end gap-1 text-[10px] mt-1 float-right ml-2 ${
+                        isMe ? 'text-emerald-200/90' : 'text-[#8696a0]'
+                      }`}
+                    >
+                      <span>{formatMessageTime(msg.createdAt)}</span>
+                      {isMe && (
+                        <span>
+                          {msg.read ? (
+                            <CheckCheck className="w-3.5 h-3.5 text-[#53bdeb]" />
+                          ) : (
+                            <Check className="w-3.5 h-3.5 opacity-80" />
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Hover Reaction Arrow Button */}
+                  <div className="relative shrink-0 self-center">
+                    <button
+                      onClick={() => setActiveReactionMsgId(isReactionOpen ? null : msg.id)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-full bg-[#2a3942] hover:bg-[#3a4952] text-[#8696a0] hover:text-white"
+                      title="React"
+                    >
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* Emoji Reaction Picker Popup */}
+                    {isReactionOpen && (
+                      <div
+                        className={`absolute bottom-8 z-30 flex items-center gap-1 bg-[#202c33] border border-[#2a3942] rounded-full px-2 py-1.5 shadow-xl ${
+                          isMe ? 'right-0' : 'left-0'
+                        }`}
+                      >
+                        {REACTION_EMOJIS.map(emoji => (
+                          <button
+                            key={emoji}
+                            onClick={() => handleReact(msg.id, emoji)}
+                            className="text-lg hover:scale-125 transition-transform active:scale-110 px-0.5"
+                            title={emoji}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
                     )}
                   </div>
                 </div>
+
+                {/* Reactions Row below bubble */}
+                {Object.keys(reactionGroups).length > 0 && (
+                  <div className={`flex flex-wrap gap-1 mt-1 ${isMe ? 'justify-end pr-8' : 'justify-start pl-1'}`}>
+                    {Object.entries(reactionGroups).map(([emoji, { count, myReaction }]) => (
+                      <button
+                        key={emoji}
+                        onClick={() => handleReact(msg.id, emoji)}
+                        className={`flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs border transition-all ${
+                          myReaction
+                            ? 'bg-[#005c4b]/60 border-emerald-500/50 text-emerald-300'
+                            : 'bg-[#202c33] border-[#2a3942] text-slate-300 hover:border-slate-500'
+                        }`}
+                      >
+                        <span>{emoji}</span>
+                        {count > 1 && <span className="text-[10px] font-semibold">{count}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })
