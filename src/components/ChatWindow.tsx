@@ -50,6 +50,7 @@ export default function ChatWindow({
   const [clearing, setClearing] = useState(false);
   const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
   const [localReactions, setLocalReactions] = useState<Record<string, { emoji: string; userId: string }[]>>({});
+  const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -255,7 +256,11 @@ export default function ChatWindow({
             return (
               <div
                 key={msg.id}
-                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group mb-1`}
+                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-1`}
+                onMouseEnter={() => setHoveredMsgId(msg.id)}
+                onMouseLeave={() => {
+                  setHoveredMsgId(null);
+                }}
               >
                 {/* Message bubble row with hover arrow */}
                 <div className={`flex items-end gap-1.5 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -309,7 +314,8 @@ export default function ChatWindow({
                   <div className="relative shrink-0 self-center">
                     <button
                       onClick={() => setActiveReactionMsgId(isReactionOpen ? null : msg.id)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-full bg-[#2a3942] hover:bg-[#3a4952] text-[#8696a0] hover:text-white"
+                      style={{ opacity: hoveredMsgId === msg.id || isReactionOpen ? 1 : 0, transition: 'opacity 0.15s' }}
+                      className="p-1 rounded-full bg-[#2a3942] hover:bg-[#3a4952] text-[#8696a0] hover:text-white"
                       title="React"
                     >
                       <ChevronDown className="w-3.5 h-3.5" />
