@@ -284,17 +284,17 @@ export default function ChatWindow({
                       </div>
                     )}
 
-                    {/* Message Text */}
-                    {msg.text && (
-                      <p className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words">
-                        {msg.text}
-                      </p>
-                    )}
+                    {/* WhatsApp-style: text with inline trailing spacer so timestamp never overlaps */}
+                    <span className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words">
+                      {msg.text}
+                      {/* Trailing invisible spacer reserves space for the float-right timestamp */}
+                      <span className="inline-block" style={{ width: isMe ? '72px' : '48px' }}>&nbsp;</span>
+                    </span>
 
-                    {/* WhatsApp Timestamp & Read Ticks */}
-                    <div
-                      className={`flex items-center justify-end gap-1 text-[10px] mt-1 float-right ml-2 ${
-                        isMe ? 'text-emerald-200/90' : 'text-[#8696a0]'
+                    {/* Timestamp + ticks — float-right inside bubble, WhatsApp style */}
+                    <span
+                      className={`flex items-center gap-1 text-[10px] float-right -mt-4 ml-2 select-none ${
+                        isMe ? 'text-emerald-200/70' : 'text-[#8696a0]'
                       }`}
                     >
                       <span>{formatMessageTime(msg.createdAt)}</span>
@@ -307,7 +307,7 @@ export default function ChatWindow({
                           )}
                         </span>
                       )}
-                    </div>
+                    </span>
                   </div>
 
                   {/* Hover Reaction Arrow Button */}
