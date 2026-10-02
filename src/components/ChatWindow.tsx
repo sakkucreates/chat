@@ -52,46 +52,58 @@ export default function ChatWindow({
   const [localReactions, setLocalReactions] = useState<Record<string, { emoji: string; userId: string }[]>>({});
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
 
-  // Tracks messages with in-flight reaction saves — skip server overwrite for these
-  const pendingReactionMsgIds = useRef<Set<string>>(new Set());
+  // Stores the CURRENT USER's own emoji choice per message.
+  // undefined = no local choice yet (use server), string = reacted, null = explicitly removed
+  // This ref is NEVER overwritten by server polling.
+  const myReactionsRef = useRef<Record<string, string | null>>({});
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync reactions from server polling — but SKIP messages with pending local reactions
+  // Sync reactions from server polls.
+  // Other users' reactions come from the server.
+  // Current user's reaction always comes from myReactionsRef (never overwritten).
   useEffect(() => {
-    setLocalReactions(prev => {
-      const updated = { ...prev };
+    setLocalReactions(() => {
+      const updated: Record<string, { emoji: string; userId: string }[]> = {};
       messages.forEach(m => {
-        // If this message has a pending in-flight reaction, don't overwrite local state
-        if (pendingReactionMsgIds.current.has(m.id)) return;
-        // Otherwise sync from server
-        updated[m.id] = m.reactions || [];
+        // Server reactions from everyone else
+        const othersFromServer = (m.reactions || []).filter(r => r.userId !== currentUser.id);
+        const myOverride = myReactionsRef.current[m.id];
+
+        if (myOverride !== undefined) {
+          // We have a local override — apply it on top of others' reactions
+          updated[m.id] = myOverride
+            ? [...othersFromServer, { emoji: myOverride, userId: currentUser.id }]
+            : othersFromServer;
+        } else {
+          // No local override yet — use full server state (initial load)
+          updated[m.id] = m.reactions || [];
+        }
       });
       return updated;
     });
-  }, [messages]);
+  }, [messages, currentUser.id]);
 
   const handleReact = async (msgId: string, emoji: string) => {
-    const prev = localReactions[msgId] || [];
-    const existingIdx = prev.findIndex(r => r.userId === currentUser.id && r.emoji === emoji);
-    let next: { emoji: string; userId: string }[];
-    if (existingIdx !== -1) {
-      next = prev.filter((_, i) => i !== existingIdx);
-    } else {
-      const sameUser = prev.findIndex(r => r.userId === currentUser.id);
-      if (sameUser !== -1) {
-        next = prev.map((r, i) => i === sameUser ? { emoji, userId: currentUser.id } : r);
-      } else {
-        next = [...prev, { emoji, userId: currentUser.id }];
-      }
-    }
-    // Optimistic update immediately
-    setLocalReactions(r => ({ ...r, [msgId]: next }));
-    setActiveReactionMsgId(null);
+    const currentMyEmoji = myReactionsRef.current[msgId];
+    // Toggle off if same emoji clicked again, otherwise switch to new emoji
+    const newMyEmoji: string | null = currentMyEmoji === emoji ? null : emoji;
 
-    // Mark this message as pending so polling doesn't overwrite our local state
-    pendingReactionMsgIds.current.add(msgId);
+    // Persist in ref immediately (survives any server poll)
+    myReactionsRef.current[msgId] = newMyEmoji;
+
+    // Update display state right away
+    setLocalReactions(prev => {
+      const othersOnly = (prev[msgId] || []).filter(r => r.userId !== currentUser.id);
+      return {
+        ...prev,
+        [msgId]: newMyEmoji
+          ? [...othersOnly, { emoji: newMyEmoji, userId: currentUser.id }]
+          : othersOnly
+      };
+    });
+    setActiveReactionMsgId(null);
 
     try {
       await fetch('/api/messages/react', {
@@ -102,11 +114,6 @@ export default function ChatWindow({
       });
     } catch {
       // Ignored
-    } finally {
-      // Release pending lock after 4 seconds — server will have saved by then
-      setTimeout(() => {
-        pendingReactionMsgIds.current.delete(msgId);
-      }, 4000);
     }
   };
 
