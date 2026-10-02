@@ -52,18 +52,24 @@ export default function ChatWindow({
   const [localReactions, setLocalReactions] = useState<Record<string, { emoji: string; userId: string }[]>>({});
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
 
+  // Tracks messages with in-flight reaction saves — skip server overwrite for these
+  const pendingReactionMsgIds = useRef<Set<string>>(new Set());
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Seed localReactions from messages on first load
+  // Sync reactions from server polling — but SKIP messages with pending local reactions
   useEffect(() => {
-    const map: Record<string, { emoji: string; userId: string }[]> = {};
-    messages.forEach(m => {
-      if (m.reactions && m.reactions.length > 0) {
-        map[m.id] = m.reactions;
-      }
+    setLocalReactions(prev => {
+      const updated = { ...prev };
+      messages.forEach(m => {
+        // If this message has a pending in-flight reaction, don't overwrite local state
+        if (pendingReactionMsgIds.current.has(m.id)) return;
+        // Otherwise sync from server
+        updated[m.id] = m.reactions || [];
+      });
+      return updated;
     });
-    setLocalReactions(map);
   }, [messages]);
 
   const handleReact = async (msgId: string, emoji: string) => {
@@ -80,8 +86,13 @@ export default function ChatWindow({
         next = [...prev, { emoji, userId: currentUser.id }];
       }
     }
+    // Optimistic update immediately
     setLocalReactions(r => ({ ...r, [msgId]: next }));
     setActiveReactionMsgId(null);
+
+    // Mark this message as pending so polling doesn't overwrite our local state
+    pendingReactionMsgIds.current.add(msgId);
+
     try {
       await fetch('/api/messages/react', {
         method: 'POST',
@@ -91,6 +102,11 @@ export default function ChatWindow({
       });
     } catch {
       // Ignored
+    } finally {
+      // Release pending lock after 4 seconds — server will have saved by then
+      setTimeout(() => {
+        pendingReactionMsgIds.current.delete(msgId);
+      }, 4000);
     }
   };
 
