@@ -142,6 +142,42 @@ async function pushKvMessage(message: Message): Promise<boolean> {
   return res !== null;
 }
 
+// Separate KV key for reactions — completely independent from message list operations
+async function getKvReactions(): Promise<Record<string, { emoji: string; userId: string }[]>> {
+  if (!KV_URL || !KV_TOKEN) return {};
+  try {
+    const result = await executeKvCommand(['GET', 'chatpass_reactions']);
+    if (result) {
+      const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+async function saveKvReaction(
+  messageId: string,
+  reactions: { emoji: string; userId: string }[]
+): Promise<boolean> {
+  if (!KV_URL || !KV_TOKEN) return false;
+  try {
+    // Read current reactions map, update just this message's reactions, write back
+    const current = await getKvReactions();
+    if (reactions.length === 0) {
+      delete current[messageId];
+    } else {
+      current[messageId] = reactions;
+    }
+    const res = await executeKvCommand(['SET', 'chatpass_reactions', JSON.stringify(current)]);
+    return res !== null;
+  } catch (err) {
+    console.warn('saveKvReaction error:', err);
+    return false;
+  }
+}
+
 // Determine DB File path for local disk fallback
 function getDbFilePath(): string {
   if (process.env.VERCEL) {
@@ -326,9 +362,19 @@ export async function deleteUser(id: string): Promise<boolean> {
 // ATOMIC MESSAGE HELPERS
 export async function getConversationMessages(user1Id: string, user2Id: string): Promise<Message[]> {
   const allMessages = (KV_URL && KV_TOKEN) ? (await getKvMessages()) || [] : (await getDb()).messages;
-  return allMessages
+  const msgs = allMessages
     .filter(m => (m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id))
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  // Merge reactions from separate KV store (avoids race condition with message polling)
+  if (KV_URL && KV_TOKEN) {
+    const kvReactions = await getKvReactions().catch(() => ({} as Record<string, { emoji: string; userId: string }[]>));
+    return msgs.map(m => ({
+      ...m,
+      reactions: kvReactions[m.id] || m.reactions || []
+    }));
+  }
+  return msgs;
 }
 
 // In-memory signature lock map to prevent duplicate requests without HTTP REST roundtrip
@@ -442,24 +488,33 @@ export async function clearConversationMessages(user1Id: string, user2Id: string
 }
 
 // Add or toggle an emoji reaction on a message
+// Reactions are stored in a SEPARATE KV key to avoid race conditions with message polling
 export async function addReactionToMessage(
   messageId: string,
   userId: string,
   emoji: string
 ): Promise<Message | null> {
-  const db = await getDb();
-  const index = db.messages.findIndex(m => m.id === messageId);
-  if (index === -1) return null;
+  // Step 1: Get current reactions for this message from the separate reactions store
+  let reactions: { emoji: string; userId: string }[] = [];
 
-  const msg = db.messages[index];
-  const reactions = msg.reactions ? [...msg.reactions] : [];
+  if (KV_URL && KV_TOKEN) {
+    const kvReactions = await getKvReactions().catch(() => ({} as Record<string, { emoji: string; userId: string }[]>));
+    reactions = kvReactions[messageId] ? [...kvReactions[messageId]] : [];
+  } else {
+    // Fallback: read from message in DB
+    const db = await getDb();
+    const msg = db.messages.find(m => m.id === messageId);
+    if (!msg) return null;
+    reactions = msg.reactions ? [...msg.reactions] : [];
+  }
 
+  // Step 2: Toggle / update the reaction
   const existingIndex = reactions.findIndex(r => r.userId === userId && r.emoji === emoji);
   if (existingIndex !== -1) {
-    // Toggle off: remove this reaction
+    // Same emoji clicked again → remove it
     reactions.splice(existingIndex, 1);
   } else {
-    // Replace any existing reaction from same user (one reaction per user per message)
+    // Replace any existing reaction from same user, or add new
     const sameUserIndex = reactions.findIndex(r => r.userId === userId);
     if (sameUserIndex !== -1) {
       reactions[sameUserIndex] = { emoji, userId };
@@ -468,20 +523,25 @@ export async function addReactionToMessage(
     }
   }
 
-  db.messages[index] = { ...msg, reactions };
-
-  if (memoryStore && Array.isArray(memoryStore.messages)) {
-    const memIdx = memoryStore.messages.findIndex(m => m.id === messageId);
-    if (memIdx !== -1) {
-      memoryStore.messages[memIdx] = { ...memoryStore.messages[memIdx], reactions };
+  // Step 3: Save ONLY to the separate reactions KV key (no touching message list at all)
+  if (KV_URL && KV_TOKEN) {
+    await saveKvReaction(messageId, reactions).catch(() => false);
+  } else {
+    // Fallback: update message in DB directly
+    const db = await getDb();
+    const index = db.messages.findIndex(m => m.id === messageId);
+    if (index !== -1) {
+      db.messages[index] = { ...db.messages[index], reactions };
+      if (memoryStore && Array.isArray(memoryStore.messages)) {
+        const memIdx = memoryStore.messages.findIndex(m => m.id === messageId);
+        if (memIdx !== -1) {
+          memoryStore.messages[memIdx] = { ...memoryStore.messages[memIdx], reactions };
+        }
+      }
+      await saveDb(db).catch(() => {});
     }
   }
 
-  if (KV_URL && KV_TOKEN) {
-    await saveKvMessages(db.messages).catch(() => false);
-  }
-  await saveDb(db).catch(() => {});
-
-  return db.messages[index];
+  // Return a synthetic message-like object for the API response
+  return { id: messageId, reactions } as unknown as Message;
 }
-
