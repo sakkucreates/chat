@@ -31,21 +31,22 @@ export async function GET(request: Request) {
 // POST /api/messages creates a new message with server timestamp
 export async function POST(request: Request) {
   try {
-    const { senderId, receiverId, text, image } = await request.json();
+    const { senderId, receiverId, text, image, video } = await request.json();
 
     if (!senderId || !receiverId) {
       return NextResponse.json({ error: 'senderId and receiverId are required' }, { status: 400 });
     }
 
-    if (!text && !image) {
-      return NextResponse.json({ error: 'Message content or image is required' }, { status: 400 });
+    if (!text && !image && !video) {
+      return NextResponse.json({ error: 'Message content, image, or video is required' }, { status: 400 });
     }
 
     const message = await createMessage({
       senderId,
       receiverId,
       text: text ? text.trim() : '',
-      image: image || undefined
+      image: image || undefined,
+      video: video || undefined
     });
 
     return NextResponse.json({ success: true, message });

@@ -19,6 +19,7 @@ export interface Message {
   receiverId: string;
   text: string;
   image?: string;
+  video?: string;
   createdAt: string;
   read: boolean;
   reactions?: { emoji: string; userId: string }[];
@@ -384,8 +385,9 @@ const recentSentSignatures = new Map<string, number>();
 export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 'read'>): Promise<Message> {
   const textTrim = (msgData.text || '').trim();
   const imgStr = msgData.image || '';
+  const vidStr = msgData.video || '';
   const now = Date.now();
-  const sig = `${msgData.senderId}_${msgData.receiverId}_${textTrim}_${imgStr}`;
+  const sig = `${msgData.senderId}_${msgData.receiverId}_${textTrim}_${imgStr}_${vidStr}`;
 
   // Fast In-Memory Deduplication Check (3-second window)
   const lastSentTime = recentSentSignatures.get(sig);
@@ -395,7 +397,8 @@ export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 
         m.senderId === msgData.senderId &&
         m.receiverId === msgData.receiverId &&
         (m.text || '').trim() === textTrim &&
-        (m.image || '') === imgStr
+        (m.image || '') === imgStr &&
+        (m.video || '') === vidStr
       );
       if (match) return match;
     }

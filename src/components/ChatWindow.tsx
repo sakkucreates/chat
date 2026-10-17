@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Send, 
   Image as ImageIcon, 
+  Video as VideoIcon,
   ArrowLeft, 
   CheckCheck, 
   Check, 
@@ -23,7 +24,7 @@ interface ChatWindowProps {
   currentUser: User;
   contact: User;
   messages: Message[];
-  onSendMessage: (text: string, image?: string) => Promise<void>;
+  onSendMessage: (text: string, image?: string, video?: string) => Promise<void>;
   onClearChat?: () => Promise<void>;
   onBack: () => void;
   loading: boolean;
@@ -43,6 +44,7 @@ export default function ChatWindow({
 }: ChatWindowProps) {
   const [text, setText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [previewLightbox, setPreviewLightbox] = useState<string | null>(null);
@@ -57,6 +59,7 @@ export default function ChatWindow({
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
 
   // Sync reactions from server polling — but SKIP messages with pending local reactions
   useEffect(() => {
@@ -120,18 +123,20 @@ export default function ChatWindow({
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if ((!text.trim() && !selectedImage) || sending) return;
+    if ((!text.trim() && !selectedImage && !selectedVideo) || sending) return;
 
     setSending(true);
     const msgText = text;
     const msgImg = selectedImage;
+    const msgVid = selectedVideo;
 
     setText('');
     setSelectedImage(null);
+    setSelectedVideo(null);
     setShowEmojiPicker(false);
 
     try {
-      await onSendMessage(msgText, msgImg || undefined);
+      await onSendMessage(msgText, msgImg || undefined, msgVid || undefined);
     } catch (err) {
       console.error('Failed to send message:', err);
     } finally {
@@ -158,6 +163,22 @@ export default function ChatWindow({
     const reader = new FileReader();
     reader.onload = () => {
       setSelectedImage(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleVideoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 20 * 1024 * 1024) {
+      alert('Video file size exceeds 20MB limit');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setSelectedVideo(reader.result as string);
     };
     reader.readAsDataURL(file);
   };
@@ -300,6 +321,19 @@ export default function ChatWindow({
                       </div>
                     )}
 
+                    {/* Video Attachment */}
+                    {msg.video && (
+                      <div className="mb-2 overflow-hidden rounded-lg bg-black/30 border border-white/10">
+                        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                        <video
+                          src={msg.video}
+                          controls
+                          className="max-h-60 w-full rounded-lg"
+                          style={{ display: 'block' }}
+                        />
+                      </div>
+                    )}
+
                     {/* WhatsApp-style: text with inline trailing spacer so timestamp never overlaps */}
                     <span className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words">
                       {msg.text}
@@ -402,6 +436,24 @@ export default function ChatWindow({
         </div>
       )}
 
+      {/* Selected Video Preview Bar */}
+      {selectedVideo && (
+        <div className="p-3 bg-[#202c33] border-t border-[#2a3942] flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-lg bg-[#111b21] border border-slate-600 flex items-center justify-center shrink-0">
+              <VideoIcon className="w-5 h-5 text-emerald-400" />
+            </div>
+            <span className="text-xs text-slate-200 font-medium">Video attached</span>
+          </div>
+          <button
+            onClick={() => setSelectedVideo(null)}
+            className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Quick Emoji Bar */}
       {showEmojiPicker && (
         <div className="px-4 py-2 bg-[#111b21] border-t border-[#222d34] flex items-center gap-2 overflow-x-auto">
@@ -427,14 +479,30 @@ export default function ChatWindow({
           onChange={handleImageSelect}
           className="hidden"
         />
+        <input
+          type="file"
+          ref={videoInputRef}
+          accept="video/*"
+          onChange={handleVideoSelect}
+          className="hidden"
+        />
 
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          title="Attach File / Image"
+          title="Attach Image"
           className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
         >
           <ImageIcon className="w-5 h-5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => videoInputRef.current?.click()}
+          title="Attach Video"
+          className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
+        >
+          <VideoIcon className="w-5 h-5" />
         </button>
 
         <button
@@ -459,7 +527,7 @@ export default function ChatWindow({
 
         <button
           type="submit"
-          disabled={(!text.trim() && !selectedImage) || sending}
+          disabled={(!text.trim() && !selectedImage && !selectedVideo) || sending}
           className="p-3 bg-[#00a884] hover:bg-[#008f70] disabled:opacity-40 text-white rounded-full shadow-md transition-all shrink-0 flex items-center justify-center active:scale-95"
         >
           {sending ? (

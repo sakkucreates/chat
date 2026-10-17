@@ -365,7 +365,7 @@ export default function HomePage() {
     }
   };
 
-  const handleSendMessage = async (text: string, image?: string) => {
+  const handleSendMessage = async (text: string, image?: string, video?: string) => {
     if (!currentUser || !activeContactId || sendingRef.current) return;
     sendingRef.current = true;
 
@@ -377,6 +377,7 @@ export default function HomePage() {
       receiverId: activeContactId,
       text: text ? text.trim() : '',
       image: image || undefined,
+      video: video || undefined,
       createdAt: new Date().toISOString(),
       read: false
     };
@@ -396,7 +397,8 @@ export default function HomePage() {
           senderId: currentUser.id,
           receiverId: activeContactId,
           text,
-          image
+          image,
+          video
         }),
         cache: 'no-store'
       });
