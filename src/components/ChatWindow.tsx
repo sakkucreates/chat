@@ -23,7 +23,9 @@ import {
   CornerUpLeft,
   Pin,
   Star,
-  Plus
+  Plus,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { User, Message } from '@/lib/db';
 
@@ -38,6 +40,8 @@ interface ChatWindowProps {
   onPanic?: () => void;
   onBack: () => void;
   loading: boolean;
+  theme?: 'dark' | 'light';
+  onToggleTheme?: () => void;
 }
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '🔥', '🎉', '👋', '🙏', '✨', '😊', '😍', '🙌', '💯'];
@@ -53,8 +57,11 @@ export default function ChatWindow({
   onTyping,
   onPanic,
   onBack,
-  loading
+  loading,
+  theme = 'dark',
+  onToggleTheme
 }: ChatWindowProps) {
+  const isLight = theme === 'light';
   const [text, setText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
@@ -301,89 +308,157 @@ export default function ChatWindow({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#0b141a] relative overflow-hidden">
+    <div
+      className={`flex-1 flex flex-col h-full relative overflow-hidden transition-colors duration-200 ${
+        isLight ? 'bg-[#efeae2]' : 'bg-[#0b141a]'
+      }`}
+    >
       {/* WhatsApp Header Bar */}
-      <div className="px-4 py-3 bg-[#202c33] border-b border-[#2a3942] flex items-center justify-between z-10 shadow-md">
+      <div
+        className={`px-4 py-3 border-b flex items-center justify-between z-10 shadow-md transition-colors ${
+          isLight
+            ? 'bg-[#f0f2f5] border-[#e9edef]'
+            : 'bg-[#202c33] border-[#2a3942]'
+        }`}
+      >
         <div className="flex items-center gap-3">
           <button
             onClick={onBack}
-            className="md:hidden p-1.5 rounded-full text-slate-300 hover:text-white hover:bg-slate-700/50"
+            className={`md:hidden p-1.5 rounded-full transition-colors ${
+              isLight
+                ? 'text-slate-600 hover:text-black hover:bg-slate-200'
+                : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+            }`}
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
 
           <div className="relative">
-            <div className="w-10 h-10 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center text-xl shadow-inner">
+            <div
+              className={`w-10 h-10 rounded-full border flex items-center justify-center text-xl shadow-inner ${
+                isLight ? 'bg-[#dfe5e7] border-[#d1d7db]' : 'bg-slate-700 border-slate-600'
+              }`}
+            >
               {contact.avatar}
             </div>
             {contact.status === 'online' && (
-              <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-[#202c33] rounded-full" />
+              <span
+                className={`absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 rounded-full ${
+                  isLight ? 'border-[#f0f2f5]' : 'border-[#202c33]'
+                }`}
+              />
             )}
           </div>
 
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="font-bold text-slate-100 text-sm sm:text-base leading-tight">{contact.name}</h3>
+              <h3
+                className={`font-bold text-sm sm:text-base leading-tight ${
+                  isLight ? 'text-[#111b21]' : 'text-slate-100'
+                }`}
+              >
+                {contact.name}
+              </h3>
               {contact.role === 'admin' && (
-                <span className="bg-emerald-500/20 text-emerald-400 text-[10px] px-1.5 py-0.2 rounded font-semibold border border-emerald-500/30">
+                <span className="bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[10px] px-1.5 py-0.2 rounded font-semibold border border-emerald-500/30">
                   Admin
                 </span>
               )}
             </div>
             <p className="text-[11px] font-medium mt-0.5 flex items-center gap-1.5">
               {contact.isTyping ? (
-                <span className="text-emerald-400 italic animate-pulse font-semibold">typing...</span>
+                <span className="text-emerald-600 dark:text-emerald-400 italic animate-pulse font-semibold">typing...</span>
               ) : contact.status === 'online' ? (
-                <span className="text-emerald-400">online</span>
+                <span className="text-emerald-600 dark:text-emerald-400">online</span>
               ) : (
-                <span className="text-slate-400">offline</span>
+                <span className={isLight ? 'text-[#667781]' : 'text-slate-400'}>offline</span>
               )}
             </p>
           </div>
         </div>
 
         {/* WhatsApp Action Icons */}
-        <div className="flex items-center gap-2 text-slate-300">
+        <div className={`flex items-center gap-2 ${isLight ? 'text-[#54656f]' : 'text-slate-300'}`}>
+          {/* Light / Dark Mode Toggle */}
+          {onToggleTheme && (
+            <button
+              type="button"
+              onClick={onToggleTheme}
+              title={isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+              className={`p-2 rounded-full transition-all flex items-center justify-center ${
+                isLight ? 'hover:bg-slate-200 text-amber-600' : 'hover:bg-slate-700/50 text-amber-300'
+              }`}
+            >
+              {isLight ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+            </button>
+          )}
+
           {onPanic && (
             <button
               onClick={onPanic}
               title="Stealth / Panic Exit (Esc)"
-              className="p-1.5 px-2.5 bg-amber-500/10 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 rounded-full transition-all flex items-center gap-1 text-xs"
+              className="p-1.5 px-2.5 bg-amber-500/10 hover:bg-amber-500/25 text-amber-500 border border-amber-500/30 rounded-full transition-all flex items-center gap-1 text-xs"
             >
-              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
               <span className="font-semibold text-[11px]">Panic</span>
             </button>
           )}
-          <button title="Start Video Call (Demo)" className="p-2 hover:bg-slate-700/50 rounded-full transition-all">
+          <button
+            title="Start Video Call (Demo)"
+            className={`p-2 rounded-full transition-all ${isLight ? 'hover:bg-slate-200' : 'hover:bg-slate-700/50'}`}
+          >
             <Video className="w-4 h-4" />
           </button>
-          <button title="Start Voice Call (Demo)" className="p-2 hover:bg-slate-700/50 rounded-full transition-all">
+          <button
+            title="Start Voice Call (Demo)"
+            className={`p-2 rounded-full transition-all ${isLight ? 'hover:bg-slate-200' : 'hover:bg-slate-700/50'}`}
+          >
             <Phone className="w-4 h-4" />
           </button>
           {onClearChat && (
             <button
               onClick={() => setShowClearConfirm(true)}
               title="Clear Chat for Safety"
-              className="p-2 hover:bg-rose-500/20 text-slate-300 hover:text-rose-400 rounded-full transition-all flex items-center gap-1 text-xs"
+              className={`p-2 rounded-full transition-all flex items-center gap-1 text-xs ${
+                isLight
+                  ? 'hover:bg-rose-50 text-slate-600 hover:text-rose-600'
+                  : 'hover:bg-rose-500/20 text-slate-300 hover:text-rose-400'
+              }`}
             >
-              <Trash2 className="w-4 h-4 text-rose-400" />
+              <Trash2 className="w-4 h-4 text-rose-500" />
               <span className="hidden sm:inline font-medium">Clear Chat</span>
             </button>
           )}
-          <div className="h-4 w-[1px] bg-slate-700 hidden sm:block" />
-          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/80 border border-slate-700/60 rounded-full text-slate-300 text-[11px]">
-            <Lock className="w-3 h-3 text-emerald-400" />
+          <div className={`h-4 w-[1px] hidden sm:block ${isLight ? 'bg-slate-300' : 'bg-slate-700'}`} />
+          <div
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] border ${
+              isLight
+                ? 'bg-white/80 border-[#e9edef] text-[#54656f]'
+                : 'bg-slate-800/80 border-slate-700/60 text-slate-300'
+            }`}
+          >
+            <Lock className="w-3 h-3 text-emerald-500" />
             <span>Passcode Encrypted</span>
           </div>
         </div>
       </div>
 
       {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#0b141a]">
+      <div
+        className={`flex-1 overflow-y-auto p-4 space-y-3 transition-colors ${
+          isLight ? 'bg-[#efeae2]' : 'bg-[#0b141a]'
+        }`}
+      >
         {/* WhatsApp Security Notice */}
         <div className="text-center my-3">
-          <div className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-[#182229] border border-[#222d34] rounded-lg text-[11px] text-[#8696a0] shadow-sm">
-            <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+          <div
+            className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[11px] shadow-sm border ${
+              isLight
+                ? 'bg-[#ffeecd] border-[#ffdda4] text-[#54656f]'
+                : 'bg-[#182229] border-[#222d34] text-[#8696a0]'
+            }`}
+          >
+            <Lock className="w-3 h-3 text-amber-500 shrink-0" />
             <span>Messages are direct & private to <strong>{contact.name}</strong>. No login required.</span>
           </div>
         </div>
@@ -394,11 +469,19 @@ export default function ChatWindow({
           </div>
         ) : messages.length === 0 ? (
           <div className="text-center py-16 px-4">
-            <div className="w-16 h-16 bg-[#111b21] rounded-full border border-[#222d34] flex items-center justify-center mx-auto mb-3 text-2xl shadow-md">
+            <div
+              className={`w-16 h-16 rounded-full border flex items-center justify-center mx-auto mb-3 text-2xl shadow-md ${
+                isLight ? 'bg-white border-[#e9edef]' : 'bg-[#111b21] border-[#222d34]'
+              }`}
+            >
               💬
             </div>
-            <p className="text-sm font-semibold text-slate-200">Say hello to {contact.name}!</p>
-            <p className="text-xs text-slate-400 mt-1">Send a message below to start chatting.</p>
+            <p className={`text-sm font-semibold ${isLight ? 'text-[#111b21]' : 'text-slate-200'}`}>
+              Say hello to {contact.name}!
+            </p>
+            <p className={`text-xs mt-1 ${isLight ? 'text-[#667781]' : 'text-slate-400'}`}>
+              Send a message below to start chatting.
+            </p>
           </div>
         ) : (
           messages.map((msg) => {
@@ -427,15 +510,19 @@ export default function ChatWindow({
                 {/* Message bubble row with hover/tap arrow */}
                 <div className={`flex items-end gap-1.5 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
                   <div
-                    className={`max-w-[85%] sm:max-w-[65%] rounded-lg p-2.5 sm:p-3 shadow-md relative ${
+                    className={`max-w-[85%] sm:max-w-[65%] rounded-lg p-2.5 sm:p-3 relative ${
                       isMe
-                        ? 'bg-[#005c4b] text-slate-100 rounded-tr-none'
-                        : 'bg-[#202c33] text-slate-100 rounded-tl-none border border-[#2a3942]'
+                        ? isLight
+                          ? 'bg-[#d9fdd3] text-[#111b21] rounded-tr-none shadow-xs border border-emerald-600/10'
+                          : 'bg-[#005c4b] text-slate-100 rounded-tr-none shadow-md'
+                        : isLight
+                        ? 'bg-white text-[#111b21] rounded-tl-none border border-black/5 shadow-xs'
+                        : 'bg-[#202c33] text-slate-100 rounded-tl-none border border-[#2a3942] shadow-md'
                     }`}
                   >
                     {/* Image Attachment */}
                     {msg.image && (
-                      <div className="mb-2 overflow-hidden rounded-lg bg-black/20 border border-white/10">
+                      <div className="mb-2 overflow-hidden rounded-lg bg-black/10 border border-black/10 dark:border-white/10">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={msg.image}
@@ -448,7 +535,7 @@ export default function ChatWindow({
 
                     {/* Video Attachment */}
                     {msg.video && (
-                      <div className="mb-2 overflow-hidden rounded-lg bg-black/30 border border-white/10">
+                      <div className="mb-2 overflow-hidden rounded-lg bg-black/20 border border-black/10 dark:border-white/10">
                         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                         <video
                           src={msg.video}
@@ -479,11 +566,17 @@ export default function ChatWindow({
                     {/* Timestamp + ticks + pin/star icons — float-right inside bubble, WhatsApp style */}
                     <span
                       className={`flex items-center gap-1 text-[10px] float-right -mt-4 ml-2 select-none ${
-                        isMe ? 'text-emerald-200/70' : 'text-[#8696a0]'
+                        isMe
+                          ? isLight
+                            ? 'text-[#667781]'
+                            : 'text-emerald-200/70'
+                          : isLight
+                          ? 'text-[#667781]'
+                          : 'text-[#8696a0]'
                       }`}
                     >
-                      {pinnedMsgId === msg.id && <Pin className="w-3 h-3 text-emerald-300" />}
-                      {starredMsgIds.has(msg.id) && <Star className="w-3 h-3 text-amber-300 fill-amber-300" />}
+                      {pinnedMsgId === msg.id && <Pin className="w-3 h-3 text-emerald-500" />}
+                      {starredMsgIds.has(msg.id) && <Star className="w-3 h-3 text-amber-400 fill-amber-400" />}
                       <span>{formatMessageTime(msg.createdAt)}</span>
                       {isMe && (
                         <span>
@@ -506,7 +599,11 @@ export default function ChatWindow({
                         setActiveReactionMsgId(isReactionOpen ? null : msg.id);
                       }}
                       style={{ opacity: hoveredMsgId === msg.id || isReactionOpen ? 1 : undefined }}
-                      className="p-1 rounded-full bg-[#2a3942] hover:bg-[#3a4952] text-[#8696a0] hover:text-white transition-opacity opacity-75 sm:opacity-0 group-hover:opacity-100"
+                      className={`p-1 rounded-full transition-opacity opacity-75 sm:opacity-0 group-hover:opacity-100 ${
+                        isLight
+                          ? 'bg-white hover:bg-slate-100 text-[#54656f] hover:text-black border border-black/5 shadow-xs'
+                          : 'bg-[#2a3942] hover:bg-[#3a4952] text-[#8696a0] hover:text-white'
+                      }`}
                       title="Options"
                     >
                       <ChevronDown className="w-3.5 h-3.5" />
@@ -528,7 +625,13 @@ export default function ChatWindow({
                           style={{ minWidth: '210px' }}
                         >
                           {/* 1. Emoji Reaction Pill on Top */}
-                          <div className="flex items-center justify-between gap-1 bg-[#202c33] border border-[#2a3942] rounded-full px-3 py-1.5 shadow-2xl">
+                          <div
+                            className={`flex items-center justify-between gap-1 rounded-full px-3 py-1.5 shadow-2xl border ${
+                              isLight
+                                ? 'bg-white border-[#e9edef]'
+                                : 'bg-[#202c33] border-[#2a3942]'
+                            }`}
+                          >
                             {REACTION_EMOJIS.map((emoji) => (
                               <button
                                 key={emoji}
@@ -549,7 +652,11 @@ export default function ChatWindow({
                                 setShowEmojiPicker((prev) => !prev);
                                 setActiveReactionMsgId(null);
                               }}
-                              className="p-1 rounded-full text-[#8696a0] hover:text-white hover:bg-slate-700/50 transition-colors ml-0.5"
+                              className={`p-1 rounded-full transition-colors ml-0.5 ${
+                                isLight
+                                  ? 'text-[#667781] hover:text-[#111b21] hover:bg-slate-100'
+                                  : 'text-[#8696a0] hover:text-white hover:bg-slate-700/50'
+                              }`}
                               title="More emojis"
                             >
                               <Plus className="w-4 h-4" />
@@ -557,17 +664,27 @@ export default function ChatWindow({
                           </div>
 
                           {/* 2. WhatsApp Dropdown Action Menu */}
-                          <div className="bg-[#202c33] border border-[#2a3942] rounded-2xl shadow-2xl py-1.5 overflow-hidden text-slate-200">
+                          <div
+                            className={`rounded-2xl shadow-2xl py-1.5 overflow-hidden border ${
+                              isLight
+                                ? 'bg-white border-[#e9edef] text-[#111b21]'
+                                : 'bg-[#202c33] border-[#2a3942] text-slate-200'
+                            }`}
+                          >
                             <button
                               type="button"
                               onClick={() => {
                                 setReplyingTo(msg);
                                 setActiveReactionMsgId(null);
                               }}
-                              className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-[#111b21] transition-colors text-left"
+                              className={`w-full flex items-center gap-3 px-4 py-2.5 text-xs transition-colors text-left ${
+                                isLight
+                                  ? 'hover:bg-[#f5f6f6] text-[#111b21]'
+                                  : 'hover:bg-[#111b21] text-slate-200'
+                              }`}
                             >
-                              <CornerUpLeft className="w-4 h-4 text-[#8696a0]" />
-                              <span className="font-medium text-slate-200">Reply</span>
+                              <CornerUpLeft className={`w-4 h-4 ${isLight ? 'text-[#667781]' : 'text-[#8696a0]'}`} />
+                              <span className="font-medium">Reply</span>
                             </button>
 
                             <button
@@ -576,10 +693,14 @@ export default function ChatWindow({
                                 handleReact(msg.id, '👍');
                                 setActiveReactionMsgId(null);
                               }}
-                              className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-[#111b21] transition-colors text-left"
+                              className={`w-full flex items-center gap-3 px-4 py-2.5 text-xs transition-colors text-left ${
+                                isLight
+                                  ? 'hover:bg-[#f5f6f6] text-[#111b21]'
+                                  : 'hover:bg-[#111b21] text-slate-200'
+                              }`}
                             >
-                              <Smile className="w-4 h-4 text-[#8696a0]" />
-                              <span className="font-medium text-slate-200">React</span>
+                              <Smile className={`w-4 h-4 ${isLight ? 'text-[#667781]' : 'text-[#8696a0]'}`} />
+                              <span className="font-medium">React</span>
                             </button>
 
                             <button
@@ -588,10 +709,14 @@ export default function ChatWindow({
                                 setPinnedMsgId((prev) => (prev === msg.id ? null : msg.id));
                                 setActiveReactionMsgId(null);
                               }}
-                              className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-[#111b21] transition-colors text-left"
+                              className={`w-full flex items-center gap-3 px-4 py-2.5 text-xs transition-colors text-left ${
+                                isLight
+                                  ? 'hover:bg-[#f5f6f6] text-[#111b21]'
+                                  : 'hover:bg-[#111b21] text-slate-200'
+                              }`}
                             >
-                              <Pin className={`w-4 h-4 ${pinnedMsgId === msg.id ? 'text-emerald-400' : 'text-[#8696a0]'}`} />
-                              <span className="font-medium text-slate-200">{pinnedMsgId === msg.id ? 'Unpin' : 'Pin'}</span>
+                              <Pin className={`w-4 h-4 ${pinnedMsgId === msg.id ? 'text-emerald-500' : isLight ? 'text-[#667781]' : 'text-[#8696a0]'}`} />
+                              <span className="font-medium">{pinnedMsgId === msg.id ? 'Unpin' : 'Pin'}</span>
                             </button>
 
                             <button
@@ -605,19 +730,23 @@ export default function ChatWindow({
                                 });
                                 setActiveReactionMsgId(null);
                               }}
-                              className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-[#111b21] transition-colors text-left"
+                              className={`w-full flex items-center gap-3 px-4 py-2.5 text-xs transition-colors text-left ${
+                                isLight
+                                  ? 'hover:bg-[#f5f6f6] text-[#111b21]'
+                                  : 'hover:bg-[#111b21] text-slate-200'
+                              }`}
                             >
                               <Star
                                 className={`w-4 h-4 ${
                                   starredMsgIds.has(msg.id)
-                                    ? 'text-amber-400 fill-amber-400'
-                                    : 'text-[#8696a0]'
+                                    ? 'text-amber-500 fill-amber-500'
+                                    : isLight ? 'text-[#667781]' : 'text-[#8696a0]'
                                 }`}
                               />
-                              <span className="font-medium text-slate-200">{starredMsgIds.has(msg.id) ? 'Unstar' : 'Star'}</span>
+                              <span className="font-medium">{starredMsgIds.has(msg.id) ? 'Unstar' : 'Star'}</span>
                             </button>
 
-                            <div className="my-1 border-t border-[#2a3942]" />
+                            <div className={`my-1 border-t ${isLight ? 'border-[#e9edef]' : 'border-[#2a3942]'}`} />
 
                             {onDeleteMessage && (
                               <button
@@ -626,9 +755,13 @@ export default function ChatWindow({
                                   setActiveReactionMsgId(null);
                                   setDeleteModalMsg(msg);
                                 }}
-                                className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-rose-950/40 text-slate-200 hover:text-rose-400 transition-colors text-left"
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 text-xs transition-colors text-left ${
+                                  isLight
+                                    ? 'hover:bg-rose-50 text-[#111b21] hover:text-rose-600'
+                                    : 'hover:bg-rose-950/40 text-slate-200 hover:text-rose-400'
+                                }`}
                               >
-                                <Trash2 className="w-4 h-4 text-slate-400 group-hover:text-rose-400" />
+                                <Trash2 className="w-4 h-4 text-slate-400 group-hover:text-rose-500" />
                                 <span className="font-medium">Delete</span>
                               </button>
                             )}
@@ -648,7 +781,11 @@ export default function ChatWindow({
                         onClick={() => handleReact(msg.id, emoji)}
                         className={`flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs border transition-all ${
                           myReaction
-                            ? 'bg-[#005c4b]/60 border-emerald-500/50 text-emerald-300'
+                            ? isLight
+                              ? 'bg-[#d9fdd3] border-emerald-500/50 text-emerald-800'
+                              : 'bg-[#005c4b]/60 border-emerald-500/50 text-emerald-300'
+                            : isLight
+                            ? 'bg-white border-[#e9edef] text-[#54656f] shadow-xs'
                             : 'bg-[#202c33] border-[#2a3942] text-slate-300 hover:border-slate-500'
                         }`}
                       >
@@ -667,19 +804,29 @@ export default function ChatWindow({
 
       {/* Replying to Preview Bar */}
       {replyingTo && (
-        <div className="p-2.5 px-4 bg-[#182229] border-t border-[#2a3942] flex items-center justify-between gap-3 text-xs">
+        <div
+          className={`p-2.5 px-4 border-t flex items-center justify-between gap-3 text-xs ${
+            isLight
+              ? 'bg-[#f0f2f5] border-[#e9edef]'
+              : 'bg-[#182229] border-[#2a3942]'
+          }`}
+        >
           <div className="border-l-3 border-[#00a884] pl-3 overflow-hidden">
             <span className="font-semibold text-[#00a884] text-[11px] block">
               {replyingTo.senderId === currentUser.id ? 'You' : contact.name}
             </span>
-            <span className="truncate block text-slate-300 text-[11px] mt-0.5">
+            <span className={`truncate block text-[11px] mt-0.5 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
               {replyingTo.text || (replyingTo.image ? '📷 Photo' : replyingTo.video ? '📹 Video' : replyingTo.audio ? '🎙️ Voice note' : 'Message')}
             </span>
           </div>
           <button
             type="button"
             onClick={() => setReplyingTo(null)}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-700/50"
+            className={`p-1.5 rounded-lg transition-colors ${
+              isLight
+                ? 'text-slate-500 hover:text-black hover:bg-slate-200'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
             title="Cancel reply"
           >
             <X className="w-4 h-4" />
@@ -689,15 +836,23 @@ export default function ChatWindow({
 
       {/* Selected Image Preview Bar */}
       {selectedImage && (
-        <div className="p-3 bg-[#202c33] border-t border-[#2a3942] flex items-center justify-between gap-3">
+        <div
+          className={`p-3 border-t flex items-center justify-between gap-3 ${
+            isLight
+              ? 'bg-[#f0f2f5] border-[#e9edef]'
+              : 'bg-[#202c33] border-[#2a3942]'
+          }`}
+        >
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={selectedImage} alt="preview" className="w-12 h-12 rounded-lg object-cover border border-slate-600" />
-            <span className="text-xs text-slate-200 font-medium">Image attached</span>
+            <img src={selectedImage} alt="preview" className="w-12 h-12 rounded-lg object-cover border border-slate-400/40" />
+            <span className={`text-xs font-medium ${isLight ? 'text-[#111b21]' : 'text-slate-200'}`}>Image attached</span>
           </div>
           <button
             onClick={() => setSelectedImage(null)}
-            className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg"
+            className={`p-1.5 rounded-lg transition-colors ${
+              isLight ? 'bg-slate-200 hover:bg-slate-300 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+            }`}
           >
             <X className="w-4 h-4" />
           </button>
@@ -706,16 +861,28 @@ export default function ChatWindow({
 
       {/* Selected Video Preview Bar */}
       {selectedVideo && (
-        <div className="p-3 bg-[#202c33] border-t border-[#2a3942] flex items-center justify-between gap-3">
+        <div
+          className={`p-3 border-t flex items-center justify-between gap-3 ${
+            isLight
+              ? 'bg-[#f0f2f5] border-[#e9edef]'
+              : 'bg-[#202c33] border-[#2a3942]'
+          }`}
+        >
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-lg bg-[#111b21] border border-slate-600 flex items-center justify-center shrink-0">
-              <VideoIcon className="w-5 h-5 text-emerald-400" />
+            <div
+              className={`w-12 h-12 rounded-lg border flex items-center justify-center shrink-0 ${
+                isLight ? 'bg-white border-[#e9edef]' : 'bg-[#111b21] border-slate-600'
+              }`}
+            >
+              <VideoIcon className="w-5 h-5 text-emerald-500" />
             </div>
-            <span className="text-xs text-slate-200 font-medium">Video attached</span>
+            <span className={`text-xs font-medium ${isLight ? 'text-[#111b21]' : 'text-slate-200'}`}>Video attached</span>
           </div>
           <button
             onClick={() => setSelectedVideo(null)}
-            className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg"
+            className={`p-1.5 rounded-lg transition-colors ${
+              isLight ? 'bg-slate-200 hover:bg-slate-300 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+            }`}
           >
             <X className="w-4 h-4" />
           </button>
@@ -724,13 +891,21 @@ export default function ChatWindow({
 
       {/* Quick Emoji Bar */}
       {showEmojiPicker && (
-        <div className="px-4 py-2 bg-[#111b21] border-t border-[#222d34] flex items-center gap-2 overflow-x-auto">
+        <div
+          className={`px-4 py-2 border-t flex items-center gap-2 overflow-x-auto ${
+            isLight
+              ? 'bg-[#f0f2f5] border-[#e9edef]'
+              : 'bg-[#111b21] border-[#222d34]'
+          }`}
+        >
           {QUICK_EMOJIS.map((emoji) => (
             <button
               key={emoji}
               type="button"
               onClick={() => setText((prev) => prev + emoji)}
-              className="text-xl p-1.5 hover:bg-[#202c33] rounded-lg transition-all"
+              className={`text-xl p-1.5 rounded-lg transition-all ${
+                isLight ? 'hover:bg-[#e9edef]' : 'hover:bg-[#202c33]'
+              }`}
             >
               {emoji}
             </button>
@@ -740,20 +915,30 @@ export default function ChatWindow({
 
       {/* WhatsApp Input Bar */}
       {isRecording ? (
-        <div className="p-3 bg-[#202c33] border-t border-[#2a3942] flex items-center justify-between gap-3">
+        <div
+          className={`p-3 border-t flex items-center justify-between gap-3 ${
+            isLight
+              ? 'bg-[#f0f2f5] border-[#e9edef]'
+              : 'bg-[#202c33] border-[#2a3942]'
+          }`}
+        >
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={cancelRecording}
               title="Cancel recording"
-              className="p-2.5 rounded-full bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 transition-all shrink-0"
+              className="p-2.5 rounded-full bg-rose-500/20 hover:bg-rose-500/30 text-rose-500 transition-all shrink-0"
             >
               <Trash2 className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-rose-500 animate-pulse" />
-              <span className="text-sm font-mono text-slate-100 font-semibold">{formatSeconds(recordingSeconds)}</span>
-              <span className="text-xs text-slate-400 hidden sm:inline">Recording voice note...</span>
+              <span className={`text-sm font-mono font-semibold ${isLight ? 'text-[#111b21]' : 'text-slate-100'}`}>
+                {formatSeconds(recordingSeconds)}
+              </span>
+              <span className={`text-xs hidden sm:inline ${isLight ? 'text-[#667781]' : 'text-slate-400'}`}>
+                Recording voice note...
+              </span>
             </div>
           </div>
 
@@ -767,7 +952,14 @@ export default function ChatWindow({
           </button>
         </div>
       ) : (
-        <form onSubmit={handleSend} className="p-3 bg-[#202c33] border-t border-[#2a3942] flex items-end gap-2">
+        <form
+          onSubmit={handleSend}
+          className={`p-3 border-t flex items-end gap-2 transition-colors ${
+            isLight
+              ? 'bg-[#f0f2f5] border-[#e9edef]'
+              : 'bg-[#202c33] border-[#2a3942]'
+          }`}
+        >
           <input
             type="file"
             ref={fileInputRef}
@@ -787,7 +979,11 @@ export default function ChatWindow({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             title="Attach Image"
-            className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
+            className={`p-2.5 rounded-full transition-all shrink-0 ${
+              isLight
+                ? 'text-[#54656f] hover:text-[#111b21] hover:bg-slate-200'
+                : 'text-[#8696a0] hover:text-slate-200 hover:bg-slate-700/50'
+            }`}
           >
             <ImageIcon className="w-5 h-5" />
           </button>
@@ -796,7 +992,11 @@ export default function ChatWindow({
             type="button"
             onClick={() => videoInputRef.current?.click()}
             title="Attach Video"
-            className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
+            className={`p-2.5 rounded-full transition-all shrink-0 ${
+              isLight
+                ? 'text-[#54656f] hover:text-[#111b21] hover:bg-slate-200'
+                : 'text-[#8696a0] hover:text-slate-200 hover:bg-slate-700/50'
+            }`}
           >
             <VideoIcon className="w-5 h-5" />
           </button>
@@ -805,19 +1005,33 @@ export default function ChatWindow({
             type="button"
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
             title="Emoji Picker"
-            className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
+            className={`p-2.5 rounded-full transition-all shrink-0 ${
+              isLight
+                ? 'text-[#54656f] hover:text-[#111b21] hover:bg-slate-200'
+                : 'text-[#8696a0] hover:text-slate-200 hover:bg-slate-700/50'
+            }`}
           >
             <Smile className="w-5 h-5" />
           </button>
 
-          <div className="flex-1 bg-[#2a3942] border border-[#2a3942] rounded-lg px-3 py-2 flex items-center">
+          <div
+            className={`flex-1 border rounded-lg px-3 py-2 flex items-center transition-colors ${
+              isLight
+                ? 'bg-white border-[#e9edef]'
+                : 'bg-[#2a3942] border-[#2a3942]'
+            }`}
+          >
             <textarea
               rows={1}
               value={text}
               onChange={handleTextChange}
               onKeyDown={handleKeyDown}
               placeholder={`Message ${contact.name}...`}
-              className="w-full bg-transparent text-xs sm:text-sm text-slate-100 placeholder:text-[#8696a0] focus:outline-none resize-none max-h-24 leading-normal"
+              className={`w-full bg-transparent text-xs sm:text-sm focus:outline-none resize-none max-h-24 leading-normal ${
+                isLight
+                  ? 'text-[#111b21] placeholder:text-[#667781]'
+                  : 'text-slate-100 placeholder:text-[#8696a0]'
+              }`}
             />
           </div>
 
@@ -864,19 +1078,31 @@ export default function ChatWindow({
       {/* Clear Chat Confirmation Modal */}
       {showClearConfirm && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-          <div className="w-full max-w-sm bg-[#111b21] border border-[#222d34] rounded-2xl p-6 text-center shadow-2xl">
-            <div className="w-12 h-12 bg-rose-500/20 rounded-full flex items-center justify-center mx-auto mb-3 text-rose-400 border border-rose-500/30">
+          <div
+            className={`w-full max-w-sm rounded-2xl p-6 text-center shadow-2xl border ${
+              isLight
+                ? 'bg-white border-[#e9edef] text-[#111b21]'
+                : 'bg-[#111b21] border-[#222d34] text-slate-100'
+            }`}
+          >
+            <div className="w-12 h-12 bg-rose-500/20 rounded-full flex items-center justify-center mx-auto mb-3 text-rose-500 border border-rose-500/30">
               <Trash2 className="w-6 h-6" />
             </div>
-            <h3 className="text-lg font-bold text-slate-100 mb-2">Clear Chat History?</h3>
-            <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+            <h3 className={`text-lg font-bold mb-2 ${isLight ? 'text-[#111b21]' : 'text-slate-100'}`}>
+              Clear Chat History?
+            </h3>
+            <p className={`text-xs mb-6 leading-relaxed ${isLight ? 'text-[#667781]' : 'text-slate-400'}`}>
               Are you sure you want to clear all messages with <strong>{contact.name}</strong>? This action cannot be undone.
             </p>
             <div className="flex gap-3">
               <button
                 onClick={() => setShowClearConfirm(false)}
                 disabled={clearing}
-                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl transition-all"
+                className={`flex-1 py-2.5 text-xs font-semibold rounded-xl transition-all ${
+                  isLight
+                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+                }`}
               >
                 Cancel
               </button>
@@ -909,12 +1135,18 @@ export default function ChatWindow({
       {/* WhatsApp Delete Message Modal (Delete for everyone / Delete for me) */}
       {deleteModalMsg && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
-          <div className="w-full max-w-xs bg-[#202c33] border border-[#2a3942] rounded-2xl p-5 shadow-2xl text-slate-100 text-center">
-            <div className="w-11 h-11 bg-rose-500/15 rounded-full flex items-center justify-center mx-auto mb-3 text-rose-400 border border-rose-500/30">
+          <div
+            className={`w-full max-w-xs rounded-2xl p-5 shadow-2xl text-center border ${
+              isLight
+                ? 'bg-white border-[#e9edef] text-[#111b21]'
+                : 'bg-[#202c33] border-[#2a3942] text-slate-100'
+            }`}
+          >
+            <div className="w-11 h-11 bg-rose-500/15 rounded-full flex items-center justify-center mx-auto mb-3 text-rose-500 border border-rose-500/30">
               <Trash2 className="w-5 h-5" />
             </div>
             <h4 className="text-base font-bold mb-1">Delete message?</h4>
-            <p className="text-xs text-slate-400 mb-5 leading-relaxed">
+            <p className={`text-xs mb-5 leading-relaxed ${isLight ? 'text-[#667781]' : 'text-slate-400'}`}>
               {deleteModalMsg.senderId === currentUser.id 
                 ? 'You can delete this message for everyone or only for yourself.' 
                 : 'Delete this message from your device?'}
@@ -945,7 +1177,11 @@ export default function ChatWindow({
                     setDeleteModalMsg(null);
                     onDeleteMessage(id, 'me');
                   }}
-                  className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700/60 transition-all active:scale-98"
+                  className={`w-full py-2.5 px-4 text-xs font-semibold rounded-xl border transition-all active:scale-98 ${
+                    isLight
+                      ? 'bg-slate-100 hover:bg-slate-200 text-[#111b21] border-[#e9edef]'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700/60'
+                  }`}
                 >
                   Delete for me
                 </button>
@@ -954,7 +1190,11 @@ export default function ChatWindow({
               <button
                 type="button"
                 onClick={() => setDeleteModalMsg(null)}
-                className="w-full py-2 px-4 text-slate-400 hover:text-slate-200 text-xs font-medium rounded-xl transition-all mt-1"
+                className={`w-full py-2 px-4 text-xs font-medium rounded-xl transition-all mt-1 ${
+                  isLight
+                    ? 'text-[#667781] hover:text-[#111b21]'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
               >
                 Cancel
               </button>

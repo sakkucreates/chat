@@ -46,9 +46,36 @@ export default function HomePage() {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Modals & Mobile View State
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [mobileView, setMobileView] = useState<'contacts' | 'chat'>('contacts');
+
+  // Dark / Light Theme state
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedTheme = localStorage.getItem('chatpass_theme') as 'dark' | 'light' | null;
+      if (savedTheme === 'light' || savedTheme === 'dark') {
+        setTheme(savedTheme);
+        document.documentElement.classList.remove('dark', 'light');
+        document.documentElement.classList.add(savedTheme);
+      } else {
+        document.documentElement.classList.add('dark');
+      }
+    }
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('chatpass_theme', next);
+        document.documentElement.classList.remove('dark', 'light');
+        document.documentElement.classList.add(next);
+      }
+      return next;
+    });
+  }, []);
 
   // Ref to track in-flight message polling AbortController
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -547,9 +574,15 @@ export default function HomePage() {
   // Loading Screen for initial session check
   if (initialChecking) {
     return (
-      <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center text-white">
+      <div
+        className={`h-screen w-screen flex flex-col items-center justify-center transition-colors ${
+          theme === 'dark' ? 'bg-slate-950 text-white' : 'bg-[#f0f2f5] text-[#111b21]'
+        }`}
+      >
         <div className="w-10 h-10 border-3 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mb-4" />
-        <p className="text-xs text-slate-400 font-medium">Connecting to ChatPass...</p>
+        <p className={`text-xs font-medium ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>
+          Connecting to ChatPass...
+        </p>
       </div>
     );
   }
@@ -579,7 +612,11 @@ export default function HomePage() {
   }
 
   return (
-    <main className="h-screen w-screen overflow-hidden bg-slate-950 flex flex-col text-slate-100 font-sans">
+    <main
+      className={`h-screen w-screen overflow-hidden flex flex-col font-sans transition-colors duration-200 ${
+        theme === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-[#f0f2f5] text-[#111b21]'
+      }`}
+    >
       <div className="flex-1 flex overflow-hidden">
         {/* Contacts Sidebar */}
         <div
@@ -596,6 +633,8 @@ export default function HomePage() {
             onLogout={handleLogout}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
+            theme={theme}
+            onToggleTheme={toggleTheme}
           />
         </div>
 
@@ -618,14 +657,22 @@ export default function HomePage() {
               onPanic={handlePanic}
               onBack={() => setMobileView('contacts')}
               loading={messagesLoading}
+              theme={theme}
+              onToggleTheme={toggleTheme}
             />
           ) : (
-            <div className="h-full flex flex-col items-center justify-center p-8 bg-slate-950 text-center">
+            <div
+              className={`h-full flex flex-col items-center justify-center p-8 text-center transition-colors ${
+                theme === 'dark' ? 'bg-slate-950 text-white' : 'bg-[#f0f2f5] text-[#111b21]'
+              }`}
+            >
               <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center shadow-2xl shadow-indigo-600/30 mb-6">
                 <MessageSquare className="w-10 h-10 text-white" />
               </div>
-              <h2 className="text-xl font-bold text-white">Your Direct Messages</h2>
-              <p className="text-slate-400 text-xs mt-2 max-w-sm">
+              <h2 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-[#111b21]'}`}>
+                Your Direct Messages
+              </h2>
+              <p className={`text-xs mt-2 max-w-sm ${theme === 'dark' ? 'text-slate-400' : 'text-[#667781]'}`}>
                 Select any contact from the left sidebar to start chatting as <strong>{currentUser.name}</strong>.
               </p>
 
