@@ -45,7 +45,12 @@ interface ChatWindowProps {
 }
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '🔥', '🎉', '👋', '🙏', '✨', '😊', '😍', '🙌', '💯'];
-const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '🎉'];
+const ALL_REACTION_EMOJIS = [
+  '👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '🎉', 
+  '👏', '💯', '✨', '😍', '🥰', '🤩', '😎', '🤝', 
+  '💪', '🥳', '🤔', '👀', '💖', '🚀', '⭐', '🎈'
+];
 
 export default function ChatWindow({
   currentUser,
@@ -74,11 +79,13 @@ export default function ChatWindow({
   const [localReactions, setLocalReactions] = useState<Record<string, { emoji: string; userId: string }[]>>({});
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
 
-  // Message actions state (Reply, Pin, Star, Delete)
+  // Message actions state (Reply, Pin, Star, Delete, Reactions)
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [pinnedMsgId, setPinnedMsgId] = useState<string | null>(null);
   const [starredMsgIds, setStarredMsgIds] = useState<Set<string>>(new Set());
   const [deleteModalMsg, setDeleteModalMsg] = useState<Message | null>(null);
+  const [menuDirection, setMenuDirection] = useState<'up' | 'down'>('up');
+  const [showReactSubmenu, setShowReactSubmenu] = useState<boolean>(false);
 
   // Voice note recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -596,7 +603,16 @@ export default function ChatWindow({
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setActiveReactionMsgId(isReactionOpen ? null : msg.id);
+                        if (isReactionOpen) {
+                          setActiveReactionMsgId(null);
+                          setShowReactSubmenu(false);
+                        } else {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          // If closer than 340px to top of screen, open downwards so it doesn't get cut off!
+                          setMenuDirection(rect.top < 340 ? 'down' : 'up');
+                          setActiveReactionMsgId(msg.id);
+                          setShowReactSubmenu(false);
+                        }
                       }}
                       style={{ opacity: hoveredMsgId === msg.id || isReactionOpen ? 1 : undefined }}
                       className={`p-1 rounded-full transition-opacity opacity-75 sm:opacity-0 group-hover:opacity-100 ${
@@ -609,20 +625,23 @@ export default function ChatWindow({
                       <ChevronDown className="w-3.5 h-3.5" />
                     </button>
 
-                    {/* WhatsApp Context Menu with Reaction Bar on top (matching screenshot) */}
+                    {/* WhatsApp Context Menu with Reaction Bar on top */}
                     {isReactionOpen && (
                       <>
                         {/* Backdrop to close when clicking outside */}
                         <div
                           className="fixed inset-0 z-40"
-                          onClick={() => setActiveReactionMsgId(null)}
+                          onClick={() => {
+                            setActiveReactionMsgId(null);
+                            setShowReactSubmenu(false);
+                          }}
                         />
 
                         <div
-                          className={`absolute bottom-8 z-50 flex flex-col gap-1.5 ${
-                            isMe ? 'right-0' : 'left-0'
-                          }`}
-                          style={{ minWidth: '210px' }}
+                          className={`absolute z-50 flex flex-col gap-1.5 ${
+                            menuDirection === 'down' ? 'top-8' : 'bottom-8'
+                          } ${isMe ? 'right-0' : 'left-0'}`}
+                          style={{ minWidth: '230px' }}
                         >
                           {/* 1. Emoji Reaction Pill on Top */}
                           <div
@@ -639,6 +658,7 @@ export default function ChatWindow({
                                 onClick={() => {
                                   handleReact(msg.id, emoji);
                                   setActiveReactionMsgId(null);
+                                  setShowReactSubmenu(false);
                                 }}
                                 className="text-xl hover:scale-125 transition-transform active:scale-110 px-0.5"
                                 title={emoji}
@@ -649,15 +669,14 @@ export default function ChatWindow({
                             <button
                               type="button"
                               onClick={() => {
-                                setShowEmojiPicker((prev) => !prev);
-                                setActiveReactionMsgId(null);
+                                setShowReactSubmenu((prev) => !prev);
                               }}
                               className={`p-1 rounded-full transition-colors ml-0.5 ${
                                 isLight
                                   ? 'text-[#667781] hover:text-[#111b21] hover:bg-slate-100'
                                   : 'text-[#8696a0] hover:text-white hover:bg-slate-700/50'
                               }`}
-                              title="More emojis"
+                              title="More reaction emojis"
                             >
                               <Plus className="w-4 h-4" />
                             </button>
@@ -676,6 +695,7 @@ export default function ChatWindow({
                               onClick={() => {
                                 setReplyingTo(msg);
                                 setActiveReactionMsgId(null);
+                                setShowReactSubmenu(false);
                               }}
                               className={`w-full flex items-center gap-3 px-4 py-2.5 text-xs transition-colors text-left ${
                                 isLight
@@ -687,27 +707,60 @@ export default function ChatWindow({
                               <span className="font-medium">Reply</span>
                             </button>
 
-                            <button
-                              type="button"
-                              onClick={() => {
-                                handleReact(msg.id, '👍');
-                                setActiveReactionMsgId(null);
-                              }}
-                              className={`w-full flex items-center gap-3 px-4 py-2.5 text-xs transition-colors text-left ${
-                                isLight
-                                  ? 'hover:bg-[#f5f6f6] text-[#111b21]'
-                                  : 'hover:bg-[#111b21] text-slate-200'
-                              }`}
-                            >
-                              <Smile className={`w-4 h-4 ${isLight ? 'text-[#667781]' : 'text-[#8696a0]'}`} />
-                              <span className="font-medium">React</span>
-                            </button>
+                            {/* React Option with multiple emojis */}
+                            <div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowReactSubmenu((prev) => !prev);
+                                }}
+                                className={`w-full flex items-center justify-between px-4 py-2.5 text-xs transition-colors text-left ${
+                                  isLight
+                                    ? 'hover:bg-[#f5f6f6] text-[#111b21]'
+                                    : 'hover:bg-[#111b21] text-slate-200'
+                                }`}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <Smile className={`w-4 h-4 ${isLight ? 'text-[#667781]' : 'text-[#8696a0]'}`} />
+                                  <span className="font-medium">React</span>
+                                </div>
+                                <span className="text-[10px] text-slate-400 font-medium">
+                                  {showReactSubmenu ? '▲ Close' : '▶ Choose emoji'}
+                                </span>
+                              </button>
+
+                              {/* Multi-Emoji Reaction Picker Tray */}
+                              {showReactSubmenu && (
+                                <div
+                                  className={`p-2 border-t border-b grid grid-cols-6 gap-1 animate-fadeIn ${
+                                    isLight ? 'bg-slate-100 border-[#e9edef]' : 'bg-[#182229] border-[#2a3942]'
+                                  }`}
+                                >
+                                  {ALL_REACTION_EMOJIS.map((emoji) => (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      onClick={() => {
+                                        handleReact(msg.id, emoji);
+                                        setActiveReactionMsgId(null);
+                                        setShowReactSubmenu(false);
+                                      }}
+                                      className="text-xl p-1.5 rounded-lg hover:scale-130 active:scale-110 transition-transform flex items-center justify-center hover:bg-black/10 dark:hover:bg-white/10"
+                                      title={emoji}
+                                    >
+                                      {emoji}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
 
                             <button
                               type="button"
                               onClick={() => {
                                 setPinnedMsgId((prev) => (prev === msg.id ? null : msg.id));
                                 setActiveReactionMsgId(null);
+                                setShowReactSubmenu(false);
                               }}
                               className={`w-full flex items-center gap-3 px-4 py-2.5 text-xs transition-colors text-left ${
                                 isLight
@@ -729,6 +782,7 @@ export default function ChatWindow({
                                   return next;
                                 });
                                 setActiveReactionMsgId(null);
+                                setShowReactSubmenu(false);
                               }}
                               className={`w-full flex items-center gap-3 px-4 py-2.5 text-xs transition-colors text-left ${
                                 isLight
@@ -753,6 +807,7 @@ export default function ChatWindow({
                                 type="button"
                                 onClick={() => {
                                   setActiveReactionMsgId(null);
+                                  setShowReactSubmenu(false);
                                   setDeleteModalMsg(msg);
                                 }}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 text-xs transition-colors text-left ${
