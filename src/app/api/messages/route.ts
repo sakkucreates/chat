@@ -31,14 +31,14 @@ export async function GET(request: Request) {
 // POST /api/messages creates a new message with server timestamp
 export async function POST(request: Request) {
   try {
-    const { senderId, receiverId, text, image, video } = await request.json();
+    const { senderId, receiverId, text, image, video, audio } = await request.json();
 
     if (!senderId || !receiverId) {
       return NextResponse.json({ error: 'senderId and receiverId are required' }, { status: 400 });
     }
 
-    if (!text && !image && !video) {
-      return NextResponse.json({ error: 'Message content, image, or video is required' }, { status: 400 });
+    if (!text && !image && !video && !audio) {
+      return NextResponse.json({ error: 'Message content, image, video, or audio is required' }, { status: 400 });
     }
 
     const message = await createMessage({
@@ -46,12 +46,42 @@ export async function POST(request: Request) {
       receiverId,
       text: text ? text.trim() : '',
       image: image || undefined,
-      video: video || undefined
+      video: video || undefined,
+      audio: audio || undefined
     });
 
     return NextResponse.json({ success: true, message });
   } catch (error) {
     console.error('Error sending message:', error);
     return NextResponse.json({ error: 'Failed to send message' }, { status: 500 });
+  }
+}
+
+// DELETE /api/messages deletes an individual message for everyone
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    let messageId = searchParams.get('messageId');
+
+    if (!messageId) {
+      try {
+        const body = await request.json();
+        messageId = body.messageId;
+      } catch {
+        // Ignored
+      }
+    }
+
+    if (!messageId) {
+      return NextResponse.json({ error: 'messageId is required' }, { status: 400 });
+    }
+
+    const { deleteMessage } = await import('@/lib/db');
+    const deleted = await deleteMessage(messageId);
+
+    return NextResponse.json({ success: true, deleted });
+  } catch (error) {
+    console.error('Error deleting message:', error);
+    return NextResponse.json({ error: 'Failed to delete message' }, { status: 500 });
   }
 }

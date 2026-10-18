@@ -7,11 +7,31 @@ import ChatWindow from '@/components/ChatWindow';
 import AdminDashboard from '@/components/AdminDashboard';
 import BeautyWebsite from '@/components/BeautyWebsite';
 import { User, Message } from '@/lib/db';
+import { encryptText, decryptText, isEncrypted } from '@/lib/crypto';
 import { MessageSquare, Shield } from 'lucide-react';
 
 export default function HomePage() {
   // Disguise Mode (@1234 password trigger)
   const [isDisguiseMode, setIsDisguiseMode] = useState<boolean>(false);
+
+  // Trigger Panic / Disguise Mode immediately
+  const handlePanic = useCallback(() => {
+    setIsDisguiseMode(true);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('chatpass_disguise', 'true');
+    }
+  }, []);
+
+  // Global Escape key shortcut for instant Panic / Disguise Mode
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handlePanic();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handlePanic]);
 
   // Current Authenticated User Session for this browser tab
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -267,8 +287,23 @@ export default function HomePage() {
       );
       const data = await res.json();
       if (data.messages && !controller.signal.aborted) {
+        // Decrypt text if encrypted
+        const decryptedMessages: Message[] = await Promise.all(
+          data.messages.map(async (m: Message) => {
+            if (m.text && isEncrypted(m.text)) {
+              try {
+                const plain = await decryptText(m.text, currentUser.id, activeContactId);
+                return { ...m, text: plain };
+              } catch {
+                return m;
+              }
+            }
+            return m;
+          })
+        );
+
         setMessages((prevMsgs) => {
-          const merged = mergeMessages(prevMsgs, data.messages);
+          const merged = mergeMessages(prevMsgs, decryptedMessages);
           setCachedMessages(currentUser.id, activeContactId, merged);
           return merged;
         });
@@ -346,6 +381,41 @@ export default function HomePage() {
     };
   }, [currentUser, activeContactId, fetchMessages, getCachedMessages]);
 
+  const handleTyping = useCallback(async (isTyping: boolean) => {
+    if (!currentUser || !activeContactId) return;
+    try {
+      await fetch('/api/users/typing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          targetId: activeContactId,
+          isTyping
+        })
+      });
+    } catch {
+      // Ignored
+    }
+  }, [currentUser, activeContactId]);
+
+  const handleDeleteMessage = useCallback(async (messageId: string) => {
+    if (!currentUser || !activeContactId) return;
+    setMessages((prev) => {
+      const updated = prev.filter((m) => m.id !== messageId);
+      setCachedMessages(currentUser.id, activeContactId, updated);
+      return updated;
+    });
+    try {
+      await fetch(`/api/messages?messageId=${encodeURIComponent(messageId)}`, {
+        method: 'DELETE',
+        cache: 'no-store'
+      });
+      fetchUsers();
+    } catch (err) {
+      console.error('Failed to delete message:', err);
+    }
+  }, [currentUser, activeContactId, setCachedMessages, fetchUsers]);
+
   const handleClearChat = async () => {
     if (!currentUser || !activeContactId) return;
     try {
@@ -365,19 +435,24 @@ export default function HomePage() {
     }
   };
 
-  const handleSendMessage = async (text: string, image?: string, video?: string) => {
+  const handleSendMessage = async (text: string, image?: string, video?: string, audio?: string) => {
     if (!currentUser || !activeContactId || sendingRef.current) return;
     sendingRef.current = true;
 
+    // Reset typing immediately when message is sent
+    handleTyping(false);
+
     // Create instant optimistic message for 0ms sending experience
     const tempId = `temp_msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const plainText = text ? text.trim() : '';
     const optimisticMsg: Message = {
       id: tempId,
       senderId: currentUser.id,
       receiverId: activeContactId,
-      text: text ? text.trim() : '',
+      text: plainText,
       image: image || undefined,
       video: video || undefined,
+      audio: audio || undefined,
       createdAt: new Date().toISOString(),
       read: false
     };
@@ -390,25 +465,34 @@ export default function HomePage() {
     });
 
     try {
+      // Encrypt plainText with AES-GCM before sending over the wire / storing in database
+      const cipherText = plainText ? await encryptText(plainText, currentUser.id, activeContactId) : '';
+
       const res = await fetch('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           senderId: currentUser.id,
           receiverId: activeContactId,
-          text,
+          text: cipherText,
           image,
-          video
+          video,
+          audio
         }),
         cache: 'no-store'
       });
 
       const data = await res.json();
       if (data.message) {
+        // Keep decrypted plain text in client state
+        const confirmedMsg: Message = {
+          ...data.message,
+          text: plainText
+        };
         setMessages((prev) => {
           // Replace optimistic message with confirmed server message
           const filtered = prev.filter((m) => m.id !== tempId);
-          const merged = mergeMessages(filtered, [data.message]);
+          const merged = mergeMessages(filtered, [confirmedMsg]);
           setCachedMessages(currentUser.id, activeContactId, merged);
           return merged;
         });
@@ -524,7 +608,10 @@ export default function HomePage() {
               contact={activeContact}
               messages={messages}
               onSendMessage={handleSendMessage}
+              onDeleteMessage={handleDeleteMessage}
               onClearChat={handleClearChat}
+              onTyping={handleTyping}
+              onPanic={handlePanic}
               onBack={() => setMobileView('contacts')}
               loading={messagesLoading}
             />

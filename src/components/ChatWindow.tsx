@@ -5,6 +5,9 @@ import {
   Send, 
   Image as ImageIcon, 
   Video as VideoIcon,
+  Mic,
+  Square,
+  ShieldAlert,
   ArrowLeft, 
   CheckCheck, 
   Check, 
@@ -24,8 +27,11 @@ interface ChatWindowProps {
   currentUser: User;
   contact: User;
   messages: Message[];
-  onSendMessage: (text: string, image?: string, video?: string) => Promise<void>;
+  onSendMessage: (text: string, image?: string, video?: string, audio?: string) => Promise<void>;
+  onDeleteMessage?: (messageId: string) => Promise<void>;
   onClearChat?: () => Promise<void>;
+  onTyping?: (isTyping: boolean) => void;
+  onPanic?: () => void;
   onBack: () => void;
   loading: boolean;
 }
@@ -38,7 +44,10 @@ export default function ChatWindow({
   contact,
   messages,
   onSendMessage,
+  onDeleteMessage,
   onClearChat,
+  onTyping,
+  onPanic,
   onBack,
   loading
 }: ChatWindowProps) {
@@ -53,6 +62,14 @@ export default function ChatWindow({
   const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
   const [localReactions, setLocalReactions] = useState<Record<string, { emoji: string; userId: string }[]>>({});
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
+
+  // Voice note recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Tracks messages with in-flight reaction saves — skip server overwrite for these
   const pendingReactionMsgIds = useRef<Set<string>>(new Set());
@@ -121,9 +138,24 @@ export default function ChatWindow({
     scrollToBottom();
   }, [messages]);
 
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setText(val);
+    if (onTyping) {
+      onTyping(true);
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = setTimeout(() => {
+        onTyping(false);
+      }, 2500);
+    }
+  };
+
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if ((!text.trim() && !selectedImage && !selectedVideo) || sending) return;
+
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    if (onTyping) onTyping(false);
 
     setSending(true);
     const msgText = text;
@@ -142,6 +174,75 @@ export default function ChatWindow({
     } finally {
       setSending(false);
     }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (ev) => {
+        if (ev.data.size > 0) {
+          audioChunksRef.current.push(ev.data);
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingSeconds(0);
+
+      recordIntervalRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Microphone error:', err);
+      alert('Microphone access is not permitted or not supported by this browser.');
+    }
+  };
+
+  const stopAndSendRecording = () => {
+    if (!mediaRecorderRef.current) return;
+    if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
+
+    const recorder = mediaRecorderRef.current;
+    recorder.onstop = () => {
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      recorder.stream.getTracks().forEach((track) => track.stop());
+
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const audioBase64 = reader.result as string;
+        try {
+          await onSendMessage('', undefined, undefined, audioBase64);
+        } catch (err) {
+          console.error('Failed to send voice note:', err);
+        }
+      };
+      reader.readAsDataURL(audioBlob);
+    };
+
+    recorder.stop();
+    setIsRecording(false);
+    setRecordingSeconds(0);
+  };
+
+  const cancelRecording = () => {
+    if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    setRecordingSeconds(0);
+    audioChunksRef.current = [];
+  };
+
+  const formatSeconds = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -218,9 +319,11 @@ export default function ChatWindow({
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-emerald-400 font-medium mt-0.5 flex items-center gap-1.5">
-              {contact.status === 'online' ? (
-                <span>online</span>
+            <p className="text-[11px] font-medium mt-0.5 flex items-center gap-1.5">
+              {contact.isTyping ? (
+                <span className="text-emerald-400 italic animate-pulse font-semibold">typing...</span>
+              ) : contact.status === 'online' ? (
+                <span className="text-emerald-400">online</span>
               ) : (
                 <span className="text-slate-400">offline</span>
               )}
@@ -230,6 +333,16 @@ export default function ChatWindow({
 
         {/* WhatsApp Action Icons */}
         <div className="flex items-center gap-2 text-slate-300">
+          {onPanic && (
+            <button
+              onClick={onPanic}
+              title="Stealth / Panic Exit (Esc)"
+              className="p-1.5 px-2.5 bg-amber-500/10 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 rounded-full transition-all flex items-center gap-1 text-xs"
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+              <span className="font-semibold text-[11px]">Panic</span>
+            </button>
+          )}
           <button title="Start Video Call (Demo)" className="p-2 hover:bg-slate-700/50 rounded-full transition-all">
             <Video className="w-4 h-4" />
           </button>
@@ -334,12 +447,22 @@ export default function ChatWindow({
                       </div>
                     )}
 
+                    {/* Audio / Voice Note Attachment */}
+                    {msg.audio && (
+                      <div className="mb-2 w-64 max-w-full">
+                        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                        <audio controls src={msg.audio} className="w-full h-9 rounded-lg" />
+                      </div>
+                    )}
+
                     {/* WhatsApp-style: text with inline trailing spacer so timestamp never overlaps */}
-                    <span className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words">
-                      {msg.text}
-                      {/* Trailing invisible spacer reserves space for the float-right timestamp */}
-                      <span className="inline-block" style={{ width: isMe ? '72px' : '48px' }}>&nbsp;</span>
-                    </span>
+                    {msg.text && (
+                      <span className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words">
+                        {msg.text}
+                        {/* Trailing invisible spacer reserves space for the float-right timestamp */}
+                        <span className="inline-block" style={{ width: isMe ? '72px' : '48px' }}>&nbsp;</span>
+                      </span>
+                    )}
 
                     {/* Timestamp + ticks — float-right inside bubble, WhatsApp style */}
                     <span
@@ -360,8 +483,8 @@ export default function ChatWindow({
                     </span>
                   </div>
 
-                  {/* Hover Reaction Arrow Button */}
-                  <div className="relative shrink-0 self-center">
+                  {/* Hover Reaction & Action Buttons */}
+                  <div className="relative shrink-0 self-center flex items-center gap-1">
                     <button
                       onClick={() => setActiveReactionMsgId(isReactionOpen ? null : msg.id)}
                       style={{ opacity: hoveredMsgId === msg.id || isReactionOpen ? 1 : 0, transition: 'opacity 0.15s' }}
@@ -370,6 +493,21 @@ export default function ChatWindow({
                     >
                       <ChevronDown className="w-3.5 h-3.5" />
                     </button>
+
+                    {onDeleteMessage && (
+                      <button
+                        onClick={() => {
+                          if (confirm('Delete this message for everyone?')) {
+                            onDeleteMessage(msg.id);
+                          }
+                        }}
+                        style={{ opacity: hoveredMsgId === msg.id ? 1 : 0, transition: 'opacity 0.15s' }}
+                        className="p-1 rounded-full bg-[#2a3942] hover:bg-rose-900/60 text-[#8696a0] hover:text-rose-400"
+                        title="Delete for everyone"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
 
                     {/* Emoji Reaction Picker Popup */}
                     {isReactionOpen && (
@@ -471,72 +609,113 @@ export default function ChatWindow({
       )}
 
       {/* WhatsApp Input Bar */}
-      <form onSubmit={handleSend} className="p-3 bg-[#202c33] border-t border-[#2a3942] flex items-end gap-2">
-        <input
-          type="file"
-          ref={fileInputRef}
-          accept="image/*"
-          onChange={handleImageSelect}
-          className="hidden"
-        />
-        <input
-          type="file"
-          ref={videoInputRef}
-          accept="video/*"
-          onChange={handleVideoSelect}
-          className="hidden"
-        />
+      {isRecording ? (
+        <div className="p-3 bg-[#202c33] border-t border-[#2a3942] flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={cancelRecording}
+              title="Cancel recording"
+              className="p-2.5 rounded-full bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 transition-all shrink-0"
+            >
+              <Trash2 className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-rose-500 animate-pulse" />
+              <span className="text-sm font-mono text-slate-100 font-semibold">{formatSeconds(recordingSeconds)}</span>
+              <span className="text-xs text-slate-400 hidden sm:inline">Recording voice note...</span>
+            </div>
+          </div>
 
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          title="Attach Image"
-          className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
-        >
-          <ImageIcon className="w-5 h-5" />
-        </button>
-
-        <button
-          type="button"
-          onClick={() => videoInputRef.current?.click()}
-          title="Attach Video"
-          className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
-        >
-          <VideoIcon className="w-5 h-5" />
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-          title="Emoji Picker"
-          className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
-        >
-          <Smile className="w-5 h-5" />
-        </button>
-
-        <div className="flex-1 bg-[#2a3942] border border-[#2a3942] rounded-lg px-3 py-2 flex items-center">
-          <textarea
-            rows={1}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={`Message ${contact.name}...`}
-            className="w-full bg-transparent text-xs sm:text-sm text-slate-100 placeholder:text-[#8696a0] focus:outline-none resize-none max-h-24 leading-normal"
-          />
-        </div>
-
-        <button
-          type="submit"
-          disabled={(!text.trim() && !selectedImage && !selectedVideo) || sending}
-          className="p-3 bg-[#00a884] hover:bg-[#008f70] disabled:opacity-40 text-white rounded-full shadow-md transition-all shrink-0 flex items-center justify-center active:scale-95"
-        >
-          {sending ? (
-            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-          ) : (
+          <button
+            type="button"
+            onClick={stopAndSendRecording}
+            title="Send Voice Note"
+            className="p-3 bg-[#00a884] hover:bg-[#008f70] text-white rounded-full shadow-md transition-all shrink-0 flex items-center justify-center active:scale-95"
+          >
             <Send className="w-4 h-4 fill-current" />
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={handleSend} className="p-3 bg-[#202c33] border-t border-[#2a3942] flex items-end gap-2">
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept="image/*"
+            onChange={handleImageSelect}
+            className="hidden"
+          />
+          <input
+            type="file"
+            ref={videoInputRef}
+            accept="video/*"
+            onChange={handleVideoSelect}
+            className="hidden"
+          />
+
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach Image"
+            className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
+          >
+            <ImageIcon className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => videoInputRef.current?.click()}
+            title="Attach Video"
+            className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
+          >
+            <VideoIcon className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            title="Emoji Picker"
+            className="p-2.5 rounded-full hover:bg-slate-700/50 text-[#8696a0] hover:text-slate-200 transition-all shrink-0"
+          >
+            <Smile className="w-5 h-5" />
+          </button>
+
+          <div className="flex-1 bg-[#2a3942] border border-[#2a3942] rounded-lg px-3 py-2 flex items-center">
+            <textarea
+              rows={1}
+              value={text}
+              onChange={handleTextChange}
+              onKeyDown={handleKeyDown}
+              placeholder={`Message ${contact.name}...`}
+              className="w-full bg-transparent text-xs sm:text-sm text-slate-100 placeholder:text-[#8696a0] focus:outline-none resize-none max-h-24 leading-normal"
+            />
+          </div>
+
+          {text.trim() || selectedImage || selectedVideo ? (
+            <button
+              type="submit"
+              disabled={sending}
+              className="p-3 bg-[#00a884] hover:bg-[#008f70] disabled:opacity-40 text-white rounded-full shadow-md transition-all shrink-0 flex items-center justify-center active:scale-95"
+              title="Send message"
+            >
+              {sending ? (
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <Send className="w-4 h-4 fill-current" />
+              )}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={startRecording}
+              className="p-3 bg-[#00a884] hover:bg-[#008f70] text-white rounded-full shadow-md transition-all shrink-0 flex items-center justify-center active:scale-95"
+              title="Record voice note"
+            >
+              <Mic className="w-5 h-5" />
+            </button>
           )}
-        </button>
-      </form>
+        </form>
+      )}
 
       {/* Lightbox Overlay */}
       {previewLightbox && (

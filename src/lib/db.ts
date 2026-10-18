@@ -11,6 +11,9 @@ export interface User {
   lastSeen: string;
   createdAt: string;
   notes?: string;
+  typingTo?: string;
+  typingAt?: number;
+  isTyping?: boolean;
 }
 
 export interface Message {
@@ -20,6 +23,7 @@ export interface Message {
   text: string;
   image?: string;
   video?: string;
+  audio?: string;
   createdAt: string;
   read: boolean;
   reactions?: { emoji: string; userId: string }[];
@@ -302,7 +306,7 @@ export async function getUserById(id: string): Promise<User | null> {
   }
 }
 
-export async function getAllUsers(): Promise<User[]> {
+export async function getAllUsers(forUserId?: string): Promise<User[]> {
   try {
     const db = await getDb();
     const rawUsers = db.users || INITIAL_DATA.users;
@@ -312,13 +316,29 @@ export async function getAllUsers(): Promise<User[]> {
     return rawUsers.map((user) => {
       const lastSeenTime = user.lastSeen ? new Date(user.lastSeen).getTime() : 0;
       const isOnline = (now - lastSeenTime) < 6000;
+      const isTyping = Boolean(
+        forUserId &&
+        user.typingTo === forUserId &&
+        user.typingAt &&
+        (now - user.typingAt) < 3500
+      );
       return {
         ...user,
-        status: isOnline ? 'online' : 'offline'
+        status: isOnline ? 'online' : 'offline',
+        isTyping
       };
     });
   } catch {
     return INITIAL_DATA.users;
+  }
+}
+
+export async function setTypingStatus(userId: string, targetId: string, isTyping: boolean): Promise<void> {
+  const db = await getDb();
+  const user = db.users.find(u => u.id === userId);
+  if (user) {
+    user.typingTo = isTyping ? targetId : undefined;
+    user.typingAt = isTyping ? Date.now() : undefined;
   }
 }
 
@@ -386,8 +406,9 @@ export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 
   const textTrim = (msgData.text || '').trim();
   const imgStr = msgData.image || '';
   const vidStr = msgData.video || '';
+  const audStr = msgData.audio || '';
   const now = Date.now();
-  const sig = `${msgData.senderId}_${msgData.receiverId}_${textTrim}_${imgStr}_${vidStr}`;
+  const sig = `${msgData.senderId}_${msgData.receiverId}_${textTrim}_${imgStr}_${vidStr}_${audStr}`;
 
   // Fast In-Memory Deduplication Check (3-second window)
   const lastSentTime = recentSentSignatures.get(sig);
@@ -398,7 +419,8 @@ export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 
         m.receiverId === msgData.receiverId &&
         (m.text || '').trim() === textTrim &&
         (m.image || '') === imgStr &&
-        (m.video || '') === vidStr
+        (m.video || '') === vidStr &&
+        (m.audio || '') === audStr
       );
       if (match) return match;
     }
@@ -488,6 +510,29 @@ export async function clearConversationMessages(user1Id: string, user2Id: string
   }
   await saveDb(db).catch(() => {});
   return true;
+}
+
+export async function deleteMessage(messageId: string): Promise<boolean> {
+  const db = await getDb();
+  const prevLen = db.messages.length;
+  db.messages = db.messages.filter(m => m.id !== messageId);
+
+  if (memoryStore && Array.isArray(memoryStore.messages)) {
+    memoryStore.messages = memoryStore.messages.filter(m => m.id !== messageId);
+  }
+
+  if (KV_URL && KV_TOKEN) {
+    await saveKvMessages(db.messages).catch(() => false);
+    try {
+      const kvReactions = await getKvReactions().catch(() => ({} as Record<string, { emoji: string; userId: string }[]>));
+      if (kvReactions[messageId]) {
+        delete kvReactions[messageId];
+        await executeKvCommand(['SET', 'chatpass_reactions', JSON.stringify(kvReactions)]);
+      }
+    } catch {}
+  }
+  await saveDb(db).catch(() => {});
+  return db.messages.length < prevLen;
 }
 
 // Add or toggle an emoji reaction on a message

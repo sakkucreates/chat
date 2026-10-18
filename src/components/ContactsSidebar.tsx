@@ -185,9 +185,16 @@ export default function ContactsSidebar({
                         hasUnread ? 'font-bold text-indigo-300' : 'text-slate-400'
                       }`}
                     >
-                      {user.lastMessage
-                        ? user.lastMessage.text || '📷 Attachment'
-                        : 'Tap to start chatting'}
+                      {user.isTyping ? (
+                        <span className="text-emerald-400 font-medium italic animate-pulse">typing...</span>
+                      ) : user.lastMessage ? (
+                        user.lastMessage.audio ? '🎙️ Voice note' :
+                        user.lastMessage.video ? '📹 Video' :
+                        user.lastMessage.image ? '📷 Photo' :
+                        (user.lastMessage.text?.startsWith('ENC:') ? '🔒 Encrypted message' : user.lastMessage.text)
+                      ) : (
+                        'Tap to start chatting'
+                      )}
                     </p>
 
                     {hasUnread && (

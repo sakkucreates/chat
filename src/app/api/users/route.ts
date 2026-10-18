@@ -14,7 +14,7 @@ export async function GET(request: Request) {
       });
     }
 
-    const users = await getAllUsers();
+    const users = await getAllUsers(activeUserId || undefined);
     const db = await getDb();
 
     // Map users with last message info & unread counts relative to activeUserId
