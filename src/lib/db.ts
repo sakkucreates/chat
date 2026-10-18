@@ -27,6 +27,7 @@ export interface Message {
   createdAt: string;
   read: boolean;
   reactions?: { emoji: string; userId: string }[];
+  deletedFor?: string[];
 }
 
 export interface DatabaseSchema {
@@ -381,11 +382,15 @@ export async function deleteUser(id: string): Promise<boolean> {
 }
 
 // ATOMIC MESSAGE HELPERS
-export async function getConversationMessages(user1Id: string, user2Id: string): Promise<Message[]> {
+export async function getConversationMessages(user1Id: string, user2Id: string, viewerId?: string): Promise<Message[]> {
   const allMessages = (KV_URL && KV_TOKEN) ? (await getKvMessages()) || [] : (await getDb()).messages;
-  const msgs = allMessages
+  let msgs = allMessages
     .filter(m => (m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id))
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  if (viewerId) {
+    msgs = msgs.filter(m => !m.deletedFor || !m.deletedFor.includes(viewerId));
+  }
 
   // Merge reactions from separate KV store (avoids race condition with message polling)
   if (KV_URL && KV_TOKEN) {
@@ -533,6 +538,38 @@ export async function deleteMessage(messageId: string): Promise<boolean> {
   }
   await saveDb(db).catch(() => {});
   return db.messages.length < prevLen;
+}
+
+export async function deleteMessageForMe(messageId: string, userId: string): Promise<boolean> {
+  const db = await getDb();
+  let found = false;
+  db.messages.forEach(m => {
+    if (m.id === messageId) {
+      if (!m.deletedFor) m.deletedFor = [];
+      if (!m.deletedFor.includes(userId)) {
+        m.deletedFor.push(userId);
+        found = true;
+      }
+    }
+  });
+
+  if (memoryStore && Array.isArray(memoryStore.messages)) {
+    memoryStore.messages.forEach(m => {
+      if (m.id === messageId) {
+        if (!m.deletedFor) m.deletedFor = [];
+        if (!m.deletedFor.includes(userId)) {
+          m.deletedFor.push(userId);
+          found = true;
+        }
+      }
+    });
+  }
+
+  if (KV_URL && KV_TOKEN) {
+    await saveKvMessages(db.messages).catch(() => false);
+  }
+  await saveDb(db).catch(() => {});
+  return found;
 }
 
 // Add or toggle an emoji reaction on a message

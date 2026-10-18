@@ -53,6 +53,7 @@ export default function HomePage() {
   // Ref to track in-flight message polling AbortController
   const abortControllerRef = useRef<AbortController | null>(null);
   const sendingRef = useRef<boolean>(false);
+  const deletedMessageIdsRef = useRef<Set<string>>(new Set());
 
   // Derived Active Contact Object (stable primitive string lookup)
   const activeContact = useMemo(
@@ -287,9 +288,10 @@ export default function HomePage() {
       );
       const data = await res.json();
       if (data.messages && !controller.signal.aborted) {
-        // Decrypt text if encrypted
+        // Filter out locally deleted messages and decrypt text
+        const validMessages = data.messages.filter((m: Message) => !deletedMessageIdsRef.current.has(m.id));
         const decryptedMessages: Message[] = await Promise.all(
-          data.messages.map(async (m: Message) => {
+          validMessages.map(async (m: Message) => {
             if (m.text && isEncrypted(m.text)) {
               try {
                 const plain = await decryptText(m.text, currentUser.id, activeContactId);
@@ -398,23 +400,25 @@ export default function HomePage() {
     }
   }, [currentUser, activeContactId]);
 
-  const handleDeleteMessage = useCallback(async (messageId: string) => {
+  const handleDeleteMessage = useCallback((messageId: string, mode: 'everyone' | 'me' = 'everyone') => {
     if (!currentUser || !activeContactId) return;
+    
+    // 0ms instant removal from UI
+    deletedMessageIdsRef.current.add(messageId);
     setMessages((prev) => {
       const updated = prev.filter((m) => m.id !== messageId);
       setCachedMessages(currentUser.id, activeContactId, updated);
       return updated;
     });
-    try {
-      await fetch(`/api/messages?messageId=${encodeURIComponent(messageId)}`, {
-        method: 'DELETE',
-        cache: 'no-store'
-      });
-      fetchUsers();
-    } catch (err) {
+
+    // Asynchronous non-blocking background server deletion
+    fetch(`/api/messages?messageId=${encodeURIComponent(messageId)}&mode=${mode}&userId=${encodeURIComponent(currentUser.id)}`, {
+      method: 'DELETE',
+      cache: 'no-store'
+    }).catch((err) => {
       console.error('Failed to delete message:', err);
-    }
-  }, [currentUser, activeContactId, setCachedMessages, fetchUsers]);
+    });
+  }, [currentUser, activeContactId, setCachedMessages]);
 
   const handleClearChat = async () => {
     if (!currentUser || !activeContactId) return;

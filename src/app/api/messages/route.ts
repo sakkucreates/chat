@@ -15,7 +15,7 @@ export async function GET(request: Request) {
     // Auto mark unread messages sent BY contactId TO userId as read
     await markMessagesAsRead(contactId, userId);
 
-    const messages = await getConversationMessages(userId, contactId);
+    const messages = await getConversationMessages(userId, contactId, userId);
 
     return NextResponse.json({ messages }, {
       headers: {
@@ -57,16 +57,20 @@ export async function POST(request: Request) {
   }
 }
 
-// DELETE /api/messages deletes an individual message for everyone
+// DELETE /api/messages deletes an individual message (either for everyone or for me)
 export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     let messageId = searchParams.get('messageId');
+    let mode = searchParams.get('mode') || 'everyone';
+    let userId = searchParams.get('userId') || undefined;
 
     if (!messageId) {
       try {
         const body = await request.json();
         messageId = body.messageId;
+        mode = body.mode || mode;
+        userId = body.userId || userId;
       } catch {
         // Ignored
       }
@@ -76,10 +80,15 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'messageId is required' }, { status: 400 });
     }
 
-    const { deleteMessage } = await import('@/lib/db');
-    const deleted = await deleteMessage(messageId);
+    const { deleteMessage, deleteMessageForMe } = await import('@/lib/db');
+    let deleted = false;
+    if (mode === 'me' && userId) {
+      deleted = await deleteMessageForMe(messageId, userId);
+    } else {
+      deleted = await deleteMessage(messageId);
+    }
 
-    return NextResponse.json({ success: true, deleted });
+    return NextResponse.json({ success: true, deleted, mode });
   } catch (error) {
     console.error('Error deleting message:', error);
     return NextResponse.json({ error: 'Failed to delete message' }, { status: 500 });

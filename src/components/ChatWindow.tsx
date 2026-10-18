@@ -32,7 +32,7 @@ interface ChatWindowProps {
   contact: User;
   messages: Message[];
   onSendMessage: (text: string, image?: string, video?: string, audio?: string) => Promise<void>;
-  onDeleteMessage?: (messageId: string) => Promise<void>;
+  onDeleteMessage?: (messageId: string, mode: 'everyone' | 'me') => void;
   onClearChat?: () => Promise<void>;
   onTyping?: (isTyping: boolean) => void;
   onPanic?: () => void;
@@ -67,10 +67,11 @@ export default function ChatWindow({
   const [localReactions, setLocalReactions] = useState<Record<string, { emoji: string; userId: string }[]>>({});
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
 
-  // Message actions state (Reply, Pin, Star)
+  // Message actions state (Reply, Pin, Star, Delete)
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [pinnedMsgId, setPinnedMsgId] = useState<string | null>(null);
   const [starredMsgIds, setStarredMsgIds] = useState<Set<string>>(new Set());
+  const [deleteModalMsg, setDeleteModalMsg] = useState<Message | null>(null);
 
   // Voice note recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -416,13 +417,14 @@ export default function ChatWindow({
             return (
               <div
                 key={msg.id}
-                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-1`}
+                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-1 group relative`}
                 onMouseEnter={() => setHoveredMsgId(msg.id)}
                 onMouseLeave={() => {
                   setHoveredMsgId(null);
                 }}
+                onClick={() => setHoveredMsgId(msg.id)}
               >
-                {/* Message bubble row with hover arrow */}
+                {/* Message bubble row with hover/tap arrow */}
                 <div className={`flex items-end gap-1.5 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
                   <div
                     className={`max-w-[85%] sm:max-w-[65%] rounded-lg p-2.5 sm:p-3 shadow-md relative ${
@@ -495,13 +497,16 @@ export default function ChatWindow({
                     </span>
                   </div>
 
-                  {/* Hover Reaction Arrow Button */}
+                  {/* Hover / Tap Reaction Arrow Button (accessible on all types of messages) */}
                   <div className="relative shrink-0 self-center">
                     <button
                       type="button"
-                      onClick={() => setActiveReactionMsgId(isReactionOpen ? null : msg.id)}
-                      style={{ opacity: hoveredMsgId === msg.id || isReactionOpen ? 1 : 0, transition: 'opacity 0.15s' }}
-                      className="p-1 rounded-full bg-[#2a3942] hover:bg-[#3a4952] text-[#8696a0] hover:text-white"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveReactionMsgId(isReactionOpen ? null : msg.id);
+                      }}
+                      style={{ opacity: hoveredMsgId === msg.id || isReactionOpen ? 1 : undefined }}
+                      className="p-1 rounded-full bg-[#2a3942] hover:bg-[#3a4952] text-[#8696a0] hover:text-white transition-opacity opacity-75 sm:opacity-0 group-hover:opacity-100"
                       title="Options"
                     >
                       <ChevronDown className="w-3.5 h-3.5" />
@@ -619,9 +624,7 @@ export default function ChatWindow({
                                 type="button"
                                 onClick={() => {
                                   setActiveReactionMsgId(null);
-                                  if (confirm('Delete this message for everyone?')) {
-                                    onDeleteMessage(msg.id);
-                                  }
+                                  setDeleteModalMsg(msg);
                                 }}
                                 className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-rose-950/40 text-slate-200 hover:text-rose-400 transition-colors text-left"
                               >
@@ -897,6 +900,63 @@ export default function ChatWindow({
                 ) : (
                   'Clear Chat'
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WhatsApp Delete Message Modal (Delete for everyone / Delete for me) */}
+      {deleteModalMsg && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+          <div className="w-full max-w-xs bg-[#202c33] border border-[#2a3942] rounded-2xl p-5 shadow-2xl text-slate-100 text-center">
+            <div className="w-11 h-11 bg-rose-500/15 rounded-full flex items-center justify-center mx-auto mb-3 text-rose-400 border border-rose-500/30">
+              <Trash2 className="w-5 h-5" />
+            </div>
+            <h4 className="text-base font-bold mb-1">Delete message?</h4>
+            <p className="text-xs text-slate-400 mb-5 leading-relaxed">
+              {deleteModalMsg.senderId === currentUser.id 
+                ? 'You can delete this message for everyone or only for yourself.' 
+                : 'Delete this message from your device?'}
+            </p>
+
+            <div className="flex flex-col gap-2">
+              {/* Delete for everyone (available for messages sent by the user) */}
+              {deleteModalMsg.senderId === currentUser.id && onDeleteMessage && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = deleteModalMsg.id;
+                    setDeleteModalMsg(null);
+                    onDeleteMessage(id, 'everyone');
+                  }}
+                  className="w-full py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-xl shadow-md transition-all active:scale-98"
+                >
+                  Delete for everyone
+                </button>
+              )}
+
+              {/* Delete for me (always available) */}
+              {onDeleteMessage && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = deleteModalMsg.id;
+                    setDeleteModalMsg(null);
+                    onDeleteMessage(id, 'me');
+                  }}
+                  className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700/60 transition-all active:scale-98"
+                >
+                  Delete for me
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setDeleteModalMsg(null)}
+                className="w-full py-2 px-4 text-slate-400 hover:text-slate-200 text-xs font-medium rounded-xl transition-all mt-1"
+              >
+                Cancel
               </button>
             </div>
           </div>
