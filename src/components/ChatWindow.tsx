@@ -19,7 +19,11 @@ import {
   Video,
   MoreVertical,
   Trash2,
-  ChevronDown
+  ChevronDown,
+  CornerUpLeft,
+  Pin,
+  Star,
+  Plus
 } from 'lucide-react';
 import { User, Message } from '@/lib/db';
 
@@ -37,7 +41,7 @@ interface ChatWindowProps {
 }
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '🔥', '🎉', '👋', '🙏', '✨', '😊', '😍', '🙌', '💯'];
-const REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 export default function ChatWindow({
   currentUser,
@@ -62,6 +66,11 @@ export default function ChatWindow({
   const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
   const [localReactions, setLocalReactions] = useState<Record<string, { emoji: string; userId: string }[]>>({});
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
+
+  // Message actions state (Reply, Pin, Star)
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [pinnedMsgId, setPinnedMsgId] = useState<string | null>(null);
+  const [starredMsgIds, setStarredMsgIds] = useState<Set<string>>(new Set());
 
   // Voice note recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -165,6 +174,7 @@ export default function ChatWindow({
     setText('');
     setSelectedImage(null);
     setSelectedVideo(null);
+    setReplyingTo(null);
     setShowEmojiPicker(false);
 
     try {
@@ -464,12 +474,14 @@ export default function ChatWindow({
                       </span>
                     )}
 
-                    {/* Timestamp + ticks — float-right inside bubble, WhatsApp style */}
+                    {/* Timestamp + ticks + pin/star icons — float-right inside bubble, WhatsApp style */}
                     <span
                       className={`flex items-center gap-1 text-[10px] float-right -mt-4 ml-2 select-none ${
                         isMe ? 'text-emerald-200/70' : 'text-[#8696a0]'
                       }`}
                     >
+                      {pinnedMsgId === msg.id && <Pin className="w-3 h-3 text-emerald-300" />}
+                      {starredMsgIds.has(msg.id) && <Star className="w-3 h-3 text-amber-300 fill-amber-300" />}
                       <span>{formatMessageTime(msg.createdAt)}</span>
                       {isMe && (
                         <span>
@@ -483,50 +495,143 @@ export default function ChatWindow({
                     </span>
                   </div>
 
-                  {/* Hover Reaction & Action Buttons */}
-                  <div className="relative shrink-0 self-center flex items-center gap-1">
+                  {/* Hover Reaction Arrow Button */}
+                  <div className="relative shrink-0 self-center">
                     <button
+                      type="button"
                       onClick={() => setActiveReactionMsgId(isReactionOpen ? null : msg.id)}
                       style={{ opacity: hoveredMsgId === msg.id || isReactionOpen ? 1 : 0, transition: 'opacity 0.15s' }}
                       className="p-1 rounded-full bg-[#2a3942] hover:bg-[#3a4952] text-[#8696a0] hover:text-white"
-                      title="React"
+                      title="Options"
                     >
                       <ChevronDown className="w-3.5 h-3.5" />
                     </button>
 
-                    {onDeleteMessage && (
-                      <button
-                        onClick={() => {
-                          if (confirm('Delete this message for everyone?')) {
-                            onDeleteMessage(msg.id);
-                          }
-                        }}
-                        style={{ opacity: hoveredMsgId === msg.id ? 1 : 0, transition: 'opacity 0.15s' }}
-                        className="p-1 rounded-full bg-[#2a3942] hover:bg-rose-900/60 text-[#8696a0] hover:text-rose-400"
-                        title="Delete for everyone"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    )}
-
-                    {/* Emoji Reaction Picker Popup */}
+                    {/* WhatsApp Context Menu with Reaction Bar on top (matching screenshot) */}
                     {isReactionOpen && (
-                      <div
-                        className={`absolute bottom-8 z-30 flex items-center gap-1 bg-[#202c33] border border-[#2a3942] rounded-full px-2 py-1.5 shadow-xl ${
-                          isMe ? 'right-0' : 'left-0'
-                        }`}
-                      >
-                        {REACTION_EMOJIS.map(emoji => (
-                          <button
-                            key={emoji}
-                            onClick={() => handleReact(msg.id, emoji)}
-                            className="text-lg hover:scale-125 transition-transform active:scale-110 px-0.5"
-                            title={emoji}
-                          >
-                            {emoji}
-                          </button>
-                        ))}
-                      </div>
+                      <>
+                        {/* Backdrop to close when clicking outside */}
+                        <div
+                          className="fixed inset-0 z-40"
+                          onClick={() => setActiveReactionMsgId(null)}
+                        />
+
+                        <div
+                          className={`absolute bottom-8 z-50 flex flex-col gap-1.5 ${
+                            isMe ? 'right-0' : 'left-0'
+                          }`}
+                          style={{ minWidth: '210px' }}
+                        >
+                          {/* 1. Emoji Reaction Pill on Top */}
+                          <div className="flex items-center justify-between gap-1 bg-[#202c33] border border-[#2a3942] rounded-full px-3 py-1.5 shadow-2xl">
+                            {REACTION_EMOJIS.map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                onClick={() => {
+                                  handleReact(msg.id, emoji);
+                                  setActiveReactionMsgId(null);
+                                }}
+                                className="text-xl hover:scale-125 transition-transform active:scale-110 px-0.5"
+                                title={emoji}
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowEmojiPicker((prev) => !prev);
+                                setActiveReactionMsgId(null);
+                              }}
+                              className="p-1 rounded-full text-[#8696a0] hover:text-white hover:bg-slate-700/50 transition-colors ml-0.5"
+                              title="More emojis"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          {/* 2. WhatsApp Dropdown Action Menu */}
+                          <div className="bg-[#202c33] border border-[#2a3942] rounded-2xl shadow-2xl py-1.5 overflow-hidden text-slate-200">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setReplyingTo(msg);
+                                setActiveReactionMsgId(null);
+                              }}
+                              className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-[#111b21] transition-colors text-left"
+                            >
+                              <CornerUpLeft className="w-4 h-4 text-[#8696a0]" />
+                              <span className="font-medium text-slate-200">Reply</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleReact(msg.id, '👍');
+                                setActiveReactionMsgId(null);
+                              }}
+                              className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-[#111b21] transition-colors text-left"
+                            >
+                              <Smile className="w-4 h-4 text-[#8696a0]" />
+                              <span className="font-medium text-slate-200">React</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPinnedMsgId((prev) => (prev === msg.id ? null : msg.id));
+                                setActiveReactionMsgId(null);
+                              }}
+                              className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-[#111b21] transition-colors text-left"
+                            >
+                              <Pin className={`w-4 h-4 ${pinnedMsgId === msg.id ? 'text-emerald-400' : 'text-[#8696a0]'}`} />
+                              <span className="font-medium text-slate-200">{pinnedMsgId === msg.id ? 'Unpin' : 'Pin'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setStarredMsgIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(msg.id)) next.delete(msg.id);
+                                  else next.add(msg.id);
+                                  return next;
+                                });
+                                setActiveReactionMsgId(null);
+                              }}
+                              className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-[#111b21] transition-colors text-left"
+                            >
+                              <Star
+                                className={`w-4 h-4 ${
+                                  starredMsgIds.has(msg.id)
+                                    ? 'text-amber-400 fill-amber-400'
+                                    : 'text-[#8696a0]'
+                                }`}
+                              />
+                              <span className="font-medium text-slate-200">{starredMsgIds.has(msg.id) ? 'Unstar' : 'Star'}</span>
+                            </button>
+
+                            <div className="my-1 border-t border-[#2a3942]" />
+
+                            {onDeleteMessage && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveReactionMsgId(null);
+                                  if (confirm('Delete this message for everyone?')) {
+                                    onDeleteMessage(msg.id);
+                                  }
+                                }}
+                                className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-rose-950/40 text-slate-200 hover:text-rose-400 transition-colors text-left"
+                              >
+                                <Trash2 className="w-4 h-4 text-slate-400 group-hover:text-rose-400" />
+                                <span className="font-medium">Delete</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>
@@ -556,6 +661,28 @@ export default function ChatWindow({
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Replying to Preview Bar */}
+      {replyingTo && (
+        <div className="p-2.5 px-4 bg-[#182229] border-t border-[#2a3942] flex items-center justify-between gap-3 text-xs">
+          <div className="border-l-3 border-[#00a884] pl-3 overflow-hidden">
+            <span className="font-semibold text-[#00a884] text-[11px] block">
+              {replyingTo.senderId === currentUser.id ? 'You' : contact.name}
+            </span>
+            <span className="truncate block text-slate-300 text-[11px] mt-0.5">
+              {replyingTo.text || (replyingTo.image ? '📷 Photo' : replyingTo.video ? '📹 Video' : replyingTo.audio ? '🎙️ Voice note' : 'Message')}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setReplyingTo(null)}
+            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-700/50"
+            title="Cancel reply"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Selected Image Preview Bar */}
       {selectedImage && (
