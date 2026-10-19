@@ -827,27 +827,47 @@ export default function ChatWindow({
                   </div>
                 </div>
 
-                {/* Reactions Row below bubble */}
-                {Object.keys(reactionGroups).length > 0 && (
-                  <div className={`flex flex-wrap gap-1 mt-1 ${isMe ? 'justify-end pr-8' : 'justify-start pl-1'}`}>
-                    {Object.entries(reactionGroups).map(([emoji, { count, myReaction }]) => (
-                      <button
-                        key={emoji}
-                        onClick={() => handleReact(msg.id, emoji)}
-                        className={`flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs border transition-all ${
-                          myReaction
-                            ? isLight
-                              ? 'bg-[#d9fdd3] border-emerald-500/50 text-emerald-800'
-                              : 'bg-[#005c4b]/60 border-emerald-500/50 text-emerald-300'
-                            : isLight
-                            ? 'bg-white border-[#e9edef] text-[#54656f] shadow-xs'
-                            : 'bg-[#202c33] border-[#2a3942] text-slate-300 hover:border-slate-500'
-                        }`}
-                      >
-                        <span>{emoji}</span>
-                        {count > 1 && <span className="text-[10px] font-semibold">{count}</span>}
-                      </button>
-                    ))}
+                {/* Written Reactions Row below bubble ("Sakku reacted ❤️ on text") */}
+                {msgReactions.length > 0 && (
+                  <div className={`flex flex-wrap gap-1.5 mt-1.5 select-none ${isMe ? 'justify-end pr-2' : 'justify-start pl-2'}`}>
+                    {msgReactions.map((r, idx) => {
+                      const reactorName = r.userId === currentUser.id ? currentUser.name : contact.name;
+                      const isMyReaction = r.userId === currentUser.id;
+                      const targetText = msg.text
+                        ? msg.text.length > 30
+                          ? `"${msg.text.slice(0, 30)}..."`
+                          : `"${msg.text}"`
+                        : msg.image
+                        ? 'photo'
+                        : msg.video
+                        ? 'video'
+                        : msg.audio
+                        ? 'voice note'
+                        : 'message';
+
+                      return (
+                        <button
+                          key={`${r.userId}_${r.emoji}_${idx}`}
+                          type="button"
+                          onClick={() => handleReact(msg.id, r.emoji)}
+                          title={`Click to ${isMyReaction ? 'remove' : 'toggle'} reaction`}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border shadow-xs transition-all hover:scale-102 active:scale-95 ${
+                            isMyReaction
+                              ? isLight
+                                ? 'bg-[#d9fdd3] border-emerald-500/60 text-emerald-900'
+                                : 'bg-[#005c4b]/80 border-emerald-500/60 text-emerald-200'
+                              : isLight
+                              ? 'bg-white border-[#e9edef] text-slate-700'
+                              : 'bg-[#202c33] border-[#2a3942] text-slate-200'
+                          }`}
+                        >
+                          <span className="text-sm shrink-0">{r.emoji}</span>
+                          <span className="text-[11px] leading-tight font-medium">
+                            <span className="font-semibold">{reactorName}</span> reacted {r.emoji} on {targetText}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
