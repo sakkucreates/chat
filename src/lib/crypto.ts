@@ -89,11 +89,13 @@ export async function encryptText(plainText: string, user1Id: string, user2Id: s
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       : new Uint8Array(require('crypto').randomBytes(12));
 
+    const ivBuf = iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as unknown as BufferSource;
+
     const encoder = new TextEncoder();
     const encodedText = encoder.encode(plainText);
 
     const ciphertext = await subtle.encrypt(
-      { name: 'AES-GCM', iv },
+      { name: 'AES-GCM', iv: ivBuf },
       key,
       encodedText
     );
@@ -105,35 +107,56 @@ export async function encryptText(plainText: string, user1Id: string, user2Id: s
   }
 }
 
-export async function decryptText(cipherText: string, user1Id: string, user2Id: string): Promise<string> {
+export async function decryptText(cipherText: string, user1Id?: string, user2Id?: string): Promise<string> {
   if (!cipherText || !isEncrypted(cipherText)) {
     return cipherText;
   }
 
   const subtle = getSubtleCrypto();
-  if (!subtle) return cipherText;
+  if (!subtle) return '';
 
-  try {
-    const parts = cipherText.split(':');
-    if (parts.length !== 3) return cipherText;
+  const parts = cipherText.split(':');
+  if (parts.length !== 3) return '';
 
-    const iv = base64ToUint8Array(parts[1]);
-    const encryptedData = base64ToUint8Array(parts[2]);
-
-    const key = await getConversationKey(user1Id, user2Id);
-    if (!key) return cipherText;
-
-    // Typecast to ArrayBuffer to satisfy SubtleCrypto.decrypt parameter requirements across environments
-    const decrypted = await subtle.decrypt(
-      { name: 'AES-GCM', iv: iv as unknown as ArrayBuffer },
-      key,
-      encryptedData as unknown as ArrayBuffer
-    );
-
-    const decoder = new TextDecoder();
-    return decoder.decode(decrypted);
-  } catch {
-    // If decryption fails, return original text safely
-    return cipherText;
+  const candidates: [string, string][] = [];
+  if (user1Id && user2Id) {
+    candidates.push([user1Id, user2Id]);
+    candidates.push([user2Id, user1Id]);
   }
+  if (user1Id) {
+    candidates.push([user1Id, 'admin_root']);
+    candidates.push(['admin_root', user1Id]);
+  }
+  if (user2Id) {
+    candidates.push([user2Id, 'admin_root']);
+    candidates.push(['admin_root', user2Id]);
+  }
+
+  for (const [u1, u2] of candidates) {
+    try {
+      const key = await getConversationKey(u1, u2);
+      if (!key) continue;
+
+      const iv = base64ToUint8Array(parts[1]);
+      const encryptedData = base64ToUint8Array(parts[2]);
+
+      const ivBuf = iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as unknown as BufferSource;
+      const dataBuf = encryptedData.buffer.slice(encryptedData.byteOffset, encryptedData.byteOffset + encryptedData.byteLength) as unknown as BufferSource;
+
+      const decrypted = await subtle.decrypt(
+        { name: 'AES-GCM', iv: ivBuf },
+        key,
+        dataBuf
+      );
+
+      const decoder = new TextDecoder();
+      const result = decoder.decode(decrypted);
+      if (result) return result;
+    } catch {
+      // try next key candidate
+    }
+  }
+
+  // If legacy decryption cannot resolve ciphertext, return clean empty string instead of raw hash
+  return '';
 }

@@ -562,7 +562,7 @@ export default function ChatWindow({
                     )}
 
                     {/* WhatsApp-style: text with inline trailing spacer so timestamp never overlaps */}
-                    {msg.text && (
+                    {msg.text && !msg.text.startsWith('ENC:') && (
                       <span className="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words">
                         {msg.text}
                         {/* Trailing invisible spacer reserves space for the float-right timestamp */}
@@ -833,10 +833,11 @@ export default function ChatWindow({
                     {msgReactions.map((r, idx) => {
                       const reactorName = r.userId === currentUser.id ? currentUser.name : contact.name;
                       const isMyReaction = r.userId === currentUser.id;
-                      const targetText = msg.text
-                        ? msg.text.length > 30
-                          ? `"${msg.text.slice(0, 30)}..."`
-                          : `"${msg.text}"`
+                      const cleanText = msg.text && !msg.text.startsWith('ENC:') ? msg.text : '';
+                      const targetText = cleanText
+                        ? cleanText.length > 30
+                          ? `"${cleanText.slice(0, 30)}..."`
+                          : `"${cleanText}"`
                         : msg.image
                         ? 'photo'
                         : msg.video
@@ -891,7 +892,7 @@ export default function ChatWindow({
               {replyingTo.senderId === currentUser.id ? 'You' : contact.name}
             </span>
             <span className={`truncate block text-[11px] mt-0.5 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
-              {replyingTo.text || (replyingTo.image ? '📷 Photo' : replyingTo.video ? '📹 Video' : replyingTo.audio ? '🎙️ Voice note' : 'Message')}
+              {(replyingTo.text && !replyingTo.text.startsWith('ENC:') ? replyingTo.text : null) || (replyingTo.image ? '📷 Photo' : replyingTo.video ? '📹 Video' : replyingTo.audio ? '🎙️ Voice note' : 'Message')}
             </span>
           </div>
           <button

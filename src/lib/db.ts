@@ -392,6 +392,25 @@ export async function getConversationMessages(user1Id: string, user2Id: string, 
     msgs = msgs.filter(m => !m.deletedFor || !m.deletedFor.includes(viewerId));
   }
 
+  // Auto-clean/decrypt any legacy encrypted messages
+  try {
+    const { decryptText } = await import('@/lib/crypto');
+    msgs = await Promise.all(
+      msgs.map(async (m) => {
+        if (m.text && m.text.startsWith('ENC:')) {
+          const decrypted = await decryptText(m.text, m.senderId, m.receiverId);
+          return {
+            ...m,
+            text: decrypted || ''
+          };
+        }
+        return m;
+      })
+    );
+  } catch {
+    // If decryption module cannot run in DB worker, safely fallback
+  }
+
   // Merge reactions from separate KV store (avoids race condition with message polling)
   if (KV_URL && KV_TOKEN) {
     const kvReactions = await getKvReactions().catch(() => ({} as Record<string, { emoji: string; userId: string }[]>));

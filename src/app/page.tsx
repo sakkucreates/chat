@@ -95,7 +95,15 @@ export default function HomePage() {
       const cached = sessionStorage.getItem(`chatpass_cache_msgs_${userId}_${contactId}`);
       if (cached) {
         const parsed = JSON.parse(cached);
-        return Array.isArray(parsed) ? parsed : [];
+        if (Array.isArray(parsed)) {
+          // Never return raw encrypted ciphertext from cache
+          return parsed.map((m: Message) => {
+            if (m.text && isEncrypted(m.text)) {
+              return { ...m, text: '' };
+            }
+            return m;
+          });
+        }
       }
     } catch {
       // Ignored
@@ -315,16 +323,16 @@ export default function HomePage() {
       );
       const data = await res.json();
       if (data.messages && !controller.signal.aborted) {
-        // Filter out locally deleted messages and decrypt text
+        // Filter out locally deleted messages and decrypt any legacy text
         const validMessages = data.messages.filter((m: Message) => !deletedMessageIdsRef.current.has(m.id));
         const decryptedMessages: Message[] = await Promise.all(
           validMessages.map(async (m: Message) => {
             if (m.text && isEncrypted(m.text)) {
               try {
-                const plain = await decryptText(m.text, currentUser.id, activeContactId);
-                return { ...m, text: plain };
+                const plain = await decryptText(m.text, m.senderId || currentUser.id, m.receiverId || activeContactId);
+                return { ...m, text: plain && !isEncrypted(plain) ? plain : '' };
               } catch {
-                return m;
+                return { ...m, text: '' };
               }
             }
             return m;
@@ -496,16 +504,14 @@ export default function HomePage() {
     });
 
     try {
-      // Encrypt plainText with AES-GCM before sending over the wire / storing in database
-      const cipherText = plainText ? await encryptText(plainText, currentUser.id, activeContactId) : '';
-
+      // Send clean plain text directly over the wire
       const res = await fetch('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           senderId: currentUser.id,
           receiverId: activeContactId,
-          text: cipherText,
+          text: plainText,
           image,
           video,
           audio
@@ -515,7 +521,6 @@ export default function HomePage() {
 
       const data = await res.json();
       if (data.message) {
-        // Keep decrypted plain text in client state
         const confirmedMsg: Message = {
           ...data.message,
           text: plainText
@@ -558,7 +563,20 @@ export default function HomePage() {
         const res = await fetch(`/api/messages?userId=${currentUser?.id}&contactId=${contact.id}`, { cache: 'no-store' });
         const data = await res.json();
         if (data.messages) {
-          const merged = mergeMessages(cached, data.messages);
+          const decryptedList: Message[] = await Promise.all(
+            data.messages.map(async (m: Message) => {
+              if (m.text && isEncrypted(m.text)) {
+                try {
+                  const plain = await decryptText(m.text, m.senderId || currentUser?.id, m.receiverId || contact.id);
+                  return { ...m, text: plain && !isEncrypted(plain) ? plain : '' };
+                } catch {
+                  return { ...m, text: '' };
+                }
+              }
+              return m;
+            })
+          );
+          const merged = mergeMessages(cached, decryptedList);
           setMessages(merged);
           setCachedMessages(currentUser?.id || '', contact.id, merged);
         }

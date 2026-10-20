@@ -293,7 +293,9 @@ export default function ContactsSidebar({
                         user.lastMessage.audio ? '🎙️ Voice note' :
                         user.lastMessage.video ? '📹 Video' :
                         user.lastMessage.image ? '📷 Photo' :
-                        (user.lastMessage.text?.startsWith('ENC:') ? '🔒 Encrypted message' : user.lastMessage.text)
+                        (user.lastMessage.text && !user.lastMessage.text.startsWith('ENC:')
+                          ? user.lastMessage.text
+                          : (user.lastMessage.text ? 'Message' : 'Tap to start chatting'))
                       ) : (
                         'Tap to start chatting'
                       )}

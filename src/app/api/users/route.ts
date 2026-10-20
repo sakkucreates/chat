@@ -18,7 +18,8 @@ export async function GET(request: Request) {
     const db = await getDb();
 
     // Map users with last message info & unread counts relative to activeUserId
-    const usersWithStats = users.map(user => {
+    const { decryptText } = await import('@/lib/crypto');
+    const usersWithStats = await Promise.all(users.map(async user => {
       let unreadCount = 0;
       let lastMessage = null;
 
@@ -30,7 +31,13 @@ export async function GET(request: Request) {
         ).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
         if (conversationMsgs.length > 0) {
-          lastMessage = conversationMsgs[conversationMsgs.length - 1];
+          const rawLast = conversationMsgs[conversationMsgs.length - 1];
+          if (rawLast.text && rawLast.text.startsWith('ENC:')) {
+            const decrypted = await decryptText(rawLast.text, rawLast.senderId, rawLast.receiverId);
+            lastMessage = { ...rawLast, text: decrypted || '' };
+          } else {
+            lastMessage = rawLast;
+          }
         }
 
         // Unread messages sent FROM this contact TO activeUserId
@@ -49,7 +56,7 @@ export async function GET(request: Request) {
         unreadCount,
         lastMessage
       };
-    });
+    }));
 
     return NextResponse.json({ users: usersWithStats });
   } catch (error) {
