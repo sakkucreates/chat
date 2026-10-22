@@ -827,32 +827,20 @@ export default function ChatWindow({
                   </div>
                 </div>
 
-                {/* Written Reactions Row below bubble ("Sakku reacted ❤️ on text") */}
+                {/* Reactions Row below bubble (Only visible reacted emoji) */}
                 {msgReactions.length > 0 && (
-                  <div className={`flex flex-wrap gap-1.5 mt-1.5 select-none ${isMe ? 'justify-end pr-2' : 'justify-start pl-2'}`}>
+                  <div className={`flex flex-wrap gap-1 mt-1 select-none ${isMe ? 'justify-end pr-2' : 'justify-start pl-2'}`}>
                     {msgReactions.map((r, idx) => {
                       const reactorName = r.userId === currentUser.id ? currentUser.name : contact.name;
                       const isMyReaction = r.userId === currentUser.id;
-                      const cleanText = msg.text && !msg.text.startsWith('ENC:') ? msg.text : '';
-                      const targetText = cleanText
-                        ? cleanText.length > 30
-                          ? `"${cleanText.slice(0, 30)}..."`
-                          : `"${cleanText}"`
-                        : msg.image
-                        ? 'photo'
-                        : msg.video
-                        ? 'video'
-                        : msg.audio
-                        ? 'voice note'
-                        : 'message';
 
                       return (
                         <button
                           key={`${r.userId}_${r.emoji}_${idx}`}
                           type="button"
                           onClick={() => handleReact(msg.id, r.emoji)}
-                          title={`Click to ${isMyReaction ? 'remove' : 'toggle'} reaction`}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border shadow-xs transition-all hover:scale-102 active:scale-95 ${
+                          title={`${reactorName}: ${r.emoji} (Click to ${isMyReaction ? 'remove' : 'toggle'})`}
+                          className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs border shadow-xs transition-all hover:scale-110 active:scale-95 cursor-pointer ${
                             isMyReaction
                               ? isLight
                                 ? 'bg-[#d9fdd3] border-emerald-500/60 text-emerald-900'
@@ -862,10 +850,7 @@ export default function ChatWindow({
                               : 'bg-[#202c33] border-[#2a3942] text-slate-200'
                           }`}
                         >
-                          <span className="text-sm shrink-0">{r.emoji}</span>
-                          <span className="text-[11px] leading-tight font-medium">
-                            <span className="font-semibold">{reactorName}</span> reacted {r.emoji} on {targetText}
-                          </span>
+                          <span className="text-sm leading-none">{r.emoji}</span>
                         </button>
                       );
                     })}
