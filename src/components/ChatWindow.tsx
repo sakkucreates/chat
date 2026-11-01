@@ -314,6 +314,22 @@ export default function ChatWindow({
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const formatChatDate = (isoString: string) => {
+    if (!isoString) return '';
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return '';
+    const now = new Date();
+
+    const msgDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const oneDay = 24 * 60 * 60 * 1000;
+    const diffDays = Math.round((today - msgDay) / oneDay);
+
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    return date.toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' });
+  };
+
   return (
     <div
       className={`flex-1 flex flex-col h-full relative overflow-hidden transition-colors duration-200 ${
@@ -491,8 +507,14 @@ export default function ChatWindow({
             </p>
           </div>
         ) : (
-          messages.map((msg) => {
+          messages.map((msg, index) => {
             const isMe = msg.senderId === currentUser.id;
+            const prevMsg = index > 0 ? messages[index - 1] : null;
+            const isNewDay = !prevMsg || (
+              Boolean(msg.createdAt) &&
+              new Date(msg.createdAt).toDateString() !== (prevMsg.createdAt ? new Date(prevMsg.createdAt).toDateString() : '')
+            );
+            const dateLabel = isNewDay && msg.createdAt ? formatChatDate(msg.createdAt) : null;
             const msgReactions = localReactions[msg.id] || [];
             const isReactionOpen = activeReactionMsgId === msg.id;
 
@@ -505,15 +527,28 @@ export default function ChatWindow({
             });
 
             return (
-              <div
-                key={msg.id}
-                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-1 group relative`}
-                onMouseEnter={() => setHoveredMsgId(msg.id)}
-                onMouseLeave={() => {
-                  setHoveredMsgId(null);
-                }}
-                onClick={() => setHoveredMsgId(msg.id)}
-              >
+              <React.Fragment key={msg.id}>
+                {dateLabel && (
+                  <div className="flex justify-center my-3 select-none">
+                    <span
+                      className={`text-xs px-3 py-1 rounded-lg font-medium shadow-xs ${
+                        isLight
+                          ? 'bg-white text-[#54656f] border border-black/5'
+                          : 'bg-[#182229] text-[#8696a0] border border-[#222d34]'
+                      }`}
+                    >
+                      {dateLabel}
+                    </span>
+                  </div>
+                )}
+                <div
+                  className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-1 group relative`}
+                  onMouseEnter={() => setHoveredMsgId(msg.id)}
+                  onMouseLeave={() => {
+                    setHoveredMsgId(null);
+                  }}
+                  onClick={() => setHoveredMsgId(msg.id)}
+                >
                 {/* Message bubble row with hover/tap arrow */}
                 <div className={`flex items-end gap-1.5 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
                   <div
@@ -584,7 +619,9 @@ export default function ChatWindow({
                     >
                       {pinnedMsgId === msg.id && <Pin className="w-3 h-3 text-emerald-500" />}
                       {starredMsgIds.has(msg.id) && <Star className="w-3 h-3 text-amber-400 fill-amber-400" />}
-                      <span>{formatMessageTime(msg.createdAt)}</span>
+                      <span title={new Date(msg.createdAt).toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' }) + ' ' + formatMessageTime(msg.createdAt)}>
+                        {formatMessageTime(msg.createdAt)}
+                      </span>
                       {isMe && (
                         <span>
                           {msg.read ? (
@@ -857,8 +894,9 @@ export default function ChatWindow({
                   </div>
                 )}
               </div>
-            );
-          })
+            </React.Fragment>
+          );
+        })
         )}
         <div ref={messagesEndRef} />
       </div>
