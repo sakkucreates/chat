@@ -315,7 +315,8 @@ export default function HomePage() {
     const codeFromUrl = params.get('code');
     const sessionCode = typeof window !== 'undefined' ? sessionStorage.getItem('chatpass_user_code') : null;
 
-    const codeToVerify = codeFromUrl || sessionCode;
+    // When someone opens this project without a specific link, default first to the Admin panel (ADMIN123), not Bita
+    const codeToVerify = codeFromUrl || (sessionCode && sessionCode !== '2021' ? sessionCode : 'ADMIN123');
 
     if (codeToVerify && !disguise) {
       fetch('/api/auth/verify', {
@@ -401,28 +402,24 @@ export default function HomePage() {
           for (const m of candidateMsgs) {
             if (!knownMessageIdsRef.current.has(m.id)) {
               knownMessageIdsRef.current.add(m.id);
-              if (!isInitialLoadRef.current) {
-                newToasts.push({
-                  id: m.id,
-                  senderName: u.name,
-                  senderAvatar: u.avatar || '👤',
-                  text: m.text || (m.image ? '📷 Sent a photo' : m.audio ? '🎙️ Voice note' : 'New message'),
-                  contact: u,
-                  time: new Date(m.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                });
-              }
+              newToasts.push({
+                id: m.id,
+                senderName: u.name,
+                senderAvatar: u.avatar || '👤',
+                text: m.text || (m.image ? '📷 Sent a photo' : m.audio ? '🎙️ Voice note' : 'New message'),
+                contact: u,
+                time: new Date(m.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              });
             }
           }
         }
 
-        if (isInitialLoadRef.current) {
-          isInitialLoadRef.current = false;
-        } else if (newToasts.length > 0) {
+        if (newToasts.length > 0) {
           // Strictly SILENT: Do not play any notification sound or ring
           setIncomingNotifications((prev) => [...prev.slice(-4), ...newToasts]);
 
-          // Dispatch silent browser desktop notification if permission granted
-          if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+          // Dispatch silent browser desktop notification if permission granted (not on first load)
+          if (!isInitialLoadRef.current && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
             for (const t of newToasts) {
               try {
                 new Notification(t.senderName, {
@@ -434,6 +431,7 @@ export default function HomePage() {
             }
           }
         }
+        isInitialLoadRef.current = false;
 
         // Update document title with unread count
         if (typeof document !== 'undefined') {

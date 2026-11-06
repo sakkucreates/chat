@@ -172,43 +172,54 @@ async function pushKvMessage(message: Message): Promise<boolean> {
   return res !== null;
 }
 
-// Separate KV key for read receipts to avoid race conditions with message deletion/rewriting
-let memoryReadReceipts: Record<string, string> = {};
+// Separate KV key for read message IDs (guarantees accurate unread counts without timestamp race conditions)
+let memoryReadReceipts: Record<string, boolean> = {};
 
-export async function getKvReadReceipts(): Promise<Record<string, string>> {
+export async function getKvReadReceipts(): Promise<Record<string, boolean>> {
   if (!KV_URL || !KV_TOKEN) return memoryReadReceipts;
   try {
     const res = await executeKvCommand(['GET', 'chatpass_read_receipts']);
     if (res) {
-      const parsed = typeof res === 'string' ? JSON.parse(res) : res;
-      return parsed && typeof parsed === 'object' ? { ...memoryReadReceipts, ...parsed } : memoryReadReceipts;
+      let parsed = typeof res === 'string' ? JSON.parse(res) : res;
+      if (typeof parsed === 'string') {
+        try { parsed = JSON.parse(parsed); } catch {}
+      }
+      if (parsed && typeof parsed === 'object') {
+        const cleaned: Record<string, boolean> = { ...memoryReadReceipts };
+        // Accept boolean ID map, or ignore legacy timestamp strings
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v === true || v === 'true' || v === 1) {
+            cleaned[k] = true;
+          }
+        }
+        return cleaned;
+      }
     }
   } catch {}
   return memoryReadReceipts;
 }
 
-export async function setKvReadReceipt(senderId: string, receiverId: string, timestamp: string): Promise<void> {
-  const key = `${senderId}_${receiverId}`;
-  memoryReadReceipts[key] = timestamp;
+export async function setKvReadReceipts(messageIds: string[]): Promise<void> {
+  if (!messageIds || messageIds.length === 0) return;
+  for (const id of messageIds) {
+    memoryReadReceipts[id] = true;
+  }
   if (!KV_URL || !KV_TOKEN) return;
   try {
     const receipts = await getKvReadReceipts();
-    receipts[key] = timestamp;
+    for (const id of messageIds) {
+      receipts[id] = true;
+    }
     await executeKvCommand(['SET', 'chatpass_read_receipts', JSON.stringify(receipts)]);
   } catch (err) {
-    console.warn('setKvReadReceipt error:', err);
+    console.warn('setKvReadReceipts error:', err);
   }
 }
 
-export function isMessageRead(m: Message, receipts?: Record<string, string>): boolean {
+export function isMessageRead(m: Message, receipts?: Record<string, boolean>): boolean {
   if (m.read) return true;
   const map = receipts || memoryReadReceipts;
-  const key = `${m.senderId}_${m.receiverId}`;
-  const readTime = map[key] || memoryReadReceipts[key];
-  if (readTime && new Date(m.createdAt).getTime() <= new Date(readTime).getTime()) {
-    return true;
-  }
-  return false;
+  return Boolean(map && map[m.id]);
 }
 
 // Separate KV key for reactions — completely independent from message list operations
@@ -377,10 +388,12 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
 
 export async function resetDatabase(): Promise<DatabaseSchema> {
   memoryStore = JSON.parse(JSON.stringify(INITIAL_DATA));
+  memoryReadReceipts = {};
 
   if (KV_URL && KV_TOKEN) {
     await saveKvUsers(INITIAL_DATA.users).catch(() => false);
     await executeKvCommand(['DEL', 'chatpass_messages']).catch(() => null);
+    await executeKvCommand(['DEL', 'chatpass_read_receipts']).catch(() => null);
   }
 
   const filePath = getDbFilePath();
@@ -643,13 +656,28 @@ async function saveKvMessages(messages: Message[]): Promise<boolean> {
   }
 }
 
-// Mark messages as read using atomic read receipts (never deletes or overwrites the message list!)
+// Mark messages as read using atomic message-ID receipts (never deletes or overwrites the message list!)
 export async function markMessagesAsRead(senderId: string, receiverId: string): Promise<void> {
-  const now = new Date().toISOString();
-  await setKvReadReceipt(senderId, receiverId, now);
+  const db = await getDb();
+  const unreadTargetMsgs = db.messages.filter(
+    m => m.senderId === senderId && m.receiverId === receiverId
+  );
+  const idsToMark = unreadTargetMsgs.map(m => m.id);
+
+  if (idsToMark.length > 0) {
+    await setKvReadReceipts(idsToMark);
+    unreadTargetMsgs.forEach(m => { m.read = true; });
+  }
+
+  if (memoryStore && Array.isArray(memoryStore.messages)) {
+    memoryStore.messages.forEach(m => {
+      if (m.senderId === senderId && m.receiverId === receiverId) {
+        m.read = true;
+      }
+    });
+  }
 
   if (!KV_URL || !KV_TOKEN) {
-    const db = await getDb();
     let updated = false;
     db.messages.forEach(m => {
       if (m.senderId === senderId && m.receiverId === receiverId && !m.read) {
