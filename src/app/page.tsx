@@ -81,40 +81,17 @@ export default function HomePage() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const deletedMessageIdsRef = useRef<Set<string>>(new Set());
 
-  // Real-time audio notification & toast state
+  // Real-time silent notification toast state (no ringing sound)
   const knownMessageIdsRef = useRef<Set<string>>(new Set());
   const isInitialLoadRef = useRef<boolean>(true);
-  const [incomingNotification, setIncomingNotification] = useState<{
+  const [incomingNotifications, setIncomingNotifications] = useState<{
+    id: string;
     senderName: string;
     senderAvatar: string;
     text: string;
     contact: User;
-  } | null>(null);
-
-  // Soft pleasant Web Audio notification chime
-  const playNotificationSound = useCallback(() => {
-    try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'sine';
-      const now = ctx.currentTime;
-      osc.frequency.setValueAtTime(587.33, now); // D5
-      osc.frequency.setValueAtTime(880, now + 0.09); // A5
-
-      gain.gain.setValueAtTime(0.2, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start(now);
-      osc.stop(now + 0.38);
-    } catch {}
-  }, []);
+    time: string;
+  }[]>([]);
 
   // Request browser notification permission on initial user action
   useEffect(() => {
@@ -123,15 +100,15 @@ export default function HomePage() {
     }
   }, []);
 
-  // Auto-dismiss incoming message toast after 5s
+  // Auto-dismiss oldest notification after 5s
   useEffect(() => {
-    if (incomingNotification) {
+    if (incomingNotifications.length > 0) {
       const timer = setTimeout(() => {
-        setIncomingNotification(null);
+        setIncomingNotifications((prev) => prev.slice(1));
       }, 5000);
       return () => clearTimeout(timer);
     }
-  }, [incomingNotification]);
+  }, [incomingNotifications]);
 
   // Derived Active Contact Object (stable primitive string lookup)
   const activeContact = useMemo(
@@ -383,7 +360,7 @@ export default function HomePage() {
     }
   }, [currentUser]);
 
-  // Poll Users & Contact List Status with Audio/Visual Notification Detection
+  // Poll Users & Contact List Status with Silent Realtime Notification Detection
   const fetchUsers = useCallback(async () => {
     if (!currentUser) return;
     try {
@@ -393,7 +370,14 @@ export default function HomePage() {
       if (data.users && Array.isArray(data.users)) {
         setUsers(data.users);
 
-        let newIncomingMsg: { contact: User; msg: Message } | null = null;
+        const newToasts: {
+          id: string;
+          senderName: string;
+          senderAvatar: string;
+          text: string;
+          contact: User;
+          time: string;
+        }[] = [];
         let totalUnread = 0;
 
         for (const u of data.users) {
@@ -402,7 +386,14 @@ export default function HomePage() {
             if (!knownMessageIdsRef.current.has(u.lastMessage.id)) {
               knownMessageIdsRef.current.add(u.lastMessage.id);
               if (!isInitialLoadRef.current && (u.unreadCount || 0) > 0) {
-                newIncomingMsg = { contact: u, msg: u.lastMessage };
+                newToasts.push({
+                  id: u.lastMessage.id,
+                  senderName: u.name,
+                  senderAvatar: u.avatar || '👤',
+                  text: u.lastMessage.text || (u.lastMessage.image ? '📷 Sent a photo' : u.lastMessage.audio ? '🎙️ Voice note' : 'New message'),
+                  contact: u,
+                  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                });
               }
             }
           }
@@ -410,26 +401,21 @@ export default function HomePage() {
 
         if (isInitialLoadRef.current) {
           isInitialLoadRef.current = false;
-        } else if (newIncomingMsg) {
-          // Play soft notification chime
-          playNotificationSound();
+        } else if (newToasts.length > 0) {
+          // Strictly SILENT: Do not play any notification sound or ring
+          setIncomingNotifications((prev) => [...prev.slice(-3), ...newToasts]);
 
-          // Show floating toast notification banner
-          setIncomingNotification({
-            senderName: newIncomingMsg.contact.name,
-            senderAvatar: newIncomingMsg.contact.avatar || '👤',
-            text: newIncomingMsg.msg.text || (newIncomingMsg.msg.image ? '📷 Sent a photo' : newIncomingMsg.msg.audio ? '🎙️ Voice note' : 'New message'),
-            contact: newIncomingMsg.contact
-          });
-
-          // Dispatch browser desktop notification if permission granted
+          // Dispatch silent browser desktop notification if permission granted
           if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-            try {
-              new Notification(newIncomingMsg.contact.name, {
-                body: newIncomingMsg.msg.text || 'Sent you a new message',
-                icon: '/favicon.ico'
-              });
-            } catch {}
+            for (const t of newToasts) {
+              try {
+                new Notification(t.senderName, {
+                  body: t.text,
+                  icon: '/favicon.ico',
+                  silent: true
+                });
+              } catch {}
+            }
           }
         }
 
@@ -445,7 +431,7 @@ export default function HomePage() {
     } catch {
       // Ignored
     }
-  }, [currentUser, activeContactId, playNotificationSound]);
+  }, [currentUser, activeContactId]);
 
   // Poll Conversation Messages (with deduplication, caching & cancellation)
   const fetchMessages = useCallback(async () => {
@@ -887,40 +873,45 @@ export default function HomePage() {
         />
       )}
 
-      {/* Realtime Incoming Message Toast Notification Banner on Alpha / User Side */}
-      {incomingNotification && (
-        <div
-          onClick={() => {
-            handleSelectContact(incomingNotification.contact);
-            setIncomingNotification(null);
-          }}
-          className="fixed top-5 right-5 z-50 flex items-center gap-3 p-3.5 bg-slate-900/95 dark:bg-slate-900/95 border border-indigo-500/50 text-white rounded-2xl shadow-2xl backdrop-blur-md cursor-pointer hover:scale-102 active:scale-95 transition-all max-w-sm animate-fadeIn"
-          style={{ boxShadow: '0 10px 30px -5px rgba(99, 102, 241, 0.4)' }}
-        >
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-xl shrink-0">
-            {incomingNotification.senderAvatar}
-          </div>
-          <div className="flex-1 min-w-0 pr-2">
-            <div className="flex items-center justify-between gap-2">
-              <h5 className="font-bold text-xs text-indigo-300 truncate">
-                {incomingNotification.senderName}
-              </h5>
-              <span className="text-[10px] text-emerald-400 font-medium">New Message</span>
+      {/* Stack of Silent Realtime Incoming Notifications on Alpha / User Side */}
+      {incomingNotifications.length > 0 && (
+        <div className="fixed top-5 right-5 z-50 flex flex-col gap-2.5 max-w-sm w-full pointer-events-auto">
+          {incomingNotifications.map((n) => (
+            <div
+              key={n.id}
+              onClick={() => {
+                handleSelectContact(n.contact);
+                setIncomingNotifications((prev) => prev.filter((item) => item.id !== n.id));
+              }}
+              className="flex items-center gap-3 p-3.5 bg-slate-900/95 dark:bg-slate-900/95 border border-indigo-500/50 text-white rounded-2xl shadow-2xl backdrop-blur-md cursor-pointer hover:scale-102 active:scale-95 transition-all animate-fadeIn"
+              style={{ boxShadow: '0 10px 30px -5px rgba(99, 102, 241, 0.4)' }}
+            >
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-xl shrink-0">
+                {n.senderAvatar}
+              </div>
+              <div className="flex-1 min-w-0 pr-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h5 className="font-bold text-xs text-indigo-300 truncate">
+                    {n.senderName}
+                  </h5>
+                  <span className="text-[10px] text-slate-400 font-mono">{n.time}</span>
+                </div>
+                <p className="text-xs text-slate-200 truncate mt-0.5 font-medium">
+                  {n.text}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIncomingNotifications((prev) => prev.filter((item) => item.id !== n.id));
+                }}
+                className="text-slate-400 hover:text-white p-1 rounded-lg text-sm"
+              >
+                ✕
+              </button>
             </div>
-            <p className="text-xs text-slate-200 truncate mt-0.5 font-medium">
-              {incomingNotification.text}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIncomingNotification(null);
-            }}
-            className="text-slate-400 hover:text-white p-1 rounded-lg text-sm"
-          >
-            ✕
-          </button>
+          ))}
         </div>
       )}
     </main>

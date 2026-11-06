@@ -132,7 +132,17 @@ async function getKvMessages(): Promise<Message[] | null> {
   if (Array.isArray(result)) {
     try {
       const parsed = result
-        .map((item: any) => (typeof item === 'string' ? JSON.parse(item) : item))
+        .map((item: any) => {
+          try {
+            let p = typeof item === 'string' ? JSON.parse(item) : item;
+            if (typeof p === 'string') {
+              try { p = JSON.parse(p); } catch {}
+            }
+            return p;
+          } catch {
+            return null;
+          }
+        })
         .filter((m: any) => m && typeof m === 'object' && m.id && m.senderId && m.receiverId);
 
       // Deduplicate strictly by ID only (never drop messages with identical text or quick timestamps)
@@ -251,101 +261,100 @@ function getDbFilePath(): string {
 }
 
 export async function getDb(): Promise<DatabaseSchema> {
-  try {
-    // 1. Try Upstash KV Cloud Store
-    if (KV_URL && KV_TOKEN) {
-      const rawUsers = await getKvUsers().catch(() => null);
-      const rawMessages = await getKvMessages().catch(() => null);
-      let users: User[] = (Array.isArray(rawUsers) && rawUsers.length > 0) ? [...rawUsers] : [...INITIAL_DATA.users];
+  let cloudMessages: Message[] | null = null;
+  let cloudUsers: User[] | null = null;
 
-      // Filter out deleted Sakku / Saaku account
-      const filteredUsers = users.filter(u => 
-        u.id !== 'usr_sakku' && 
-        u.name?.trim().toLowerCase() !== 'sakku' && 
-        u.name?.trim().toLowerCase() !== 'saaku'
-      );
-      let kvUsersNeedSave = filteredUsers.length !== users.length;
-      users = filteredUsers;
-
-      // Auto-merge seeded accounts if missing from KV store so all project accounts are always displayed
-      for (const seeded of INITIAL_DATA.users) {
-        const exists = users.some(u => 
-          u.id === seeded.id || 
-          u.code?.trim().toUpperCase() === seeded.code.trim().toUpperCase() ||
-          u.name?.trim().toLowerCase() === seeded.name.trim().toLowerCase()
-        );
-        if (!exists) {
-          users.push(seeded);
-          kvUsersNeedSave = true;
-        }
-      }
-      if (kvUsersNeedSave) {
-        await saveKvUsers(users).catch(() => false);
-      }
-
-      const receipts = await getKvReadReceipts().catch(() => ({}));
-      const messages = (Array.isArray(rawMessages) ? rawMessages : []).map(m => ({
-        ...m,
-        read: isMessageRead(m, receipts)
-      }));
-      return {
-        adminCode: INITIAL_DATA.adminCode,
-        users,
-        messages
-      };
+  if (KV_URL && KV_TOKEN) {
+    try {
+      cloudUsers = await getKvUsers().catch(() => null);
+      cloudMessages = await getKvMessages().catch(() => null);
+    } catch (kvErr) {
+      console.warn('KV Store fetch error, falling back:', kvErr);
     }
-  } catch (kvErr) {
-    console.warn('KV Store fetch error, falling back:', kvErr);
   }
 
-  // 2. Try Local File / Tmp disk
+  // Read disk fallback file
+  let diskData: DatabaseSchema | null = null;
   const filePath = getDbFilePath();
   try {
     if (fs.existsSync(filePath)) {
       const fileData = fs.readFileSync(filePath, 'utf-8');
-      const parsed = JSON.parse(fileData);
-      if (parsed && Array.isArray(parsed.users)) {
-        // Filter out deleted Sakku / Saaku account
-        const filtered = parsed.users.filter((u: any) => 
-          u.id !== 'usr_sakku' && 
-          u.name?.trim().toLowerCase() !== 'sakku' && 
-          u.name?.trim().toLowerCase() !== 'saaku'
-        );
-        let fileNeedsSave = filtered.length !== parsed.users.length;
-        parsed.users = filtered;
+      diskData = JSON.parse(fileData);
+    }
+  } catch {}
 
-        for (const seeded of INITIAL_DATA.users) {
-          const exists = parsed.users.some((u: any) => 
-            u.id === seeded.id || 
-            u.code?.trim().toUpperCase() === seeded.code.trim().toUpperCase() ||
-            u.name?.trim().toLowerCase() === seeded.name.trim().toLowerCase()
-          );
-          if (!exists) {
-            parsed.users.push(seeded);
-            fileNeedsSave = true;
-          }
-        }
-        if (fileNeedsSave) {
-          try {
-            fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2), 'utf-8');
-          } catch {}
-        }
-        memoryStore = parsed;
-        return parsed;
+  // Merge users: prioritize cloudUsers -> diskData -> INITIAL_DATA
+  let users: User[] = (Array.isArray(cloudUsers) && cloudUsers.length > 0)
+    ? [...cloudUsers]
+    : (diskData && Array.isArray(diskData.users) && diskData.users.length > 0)
+    ? [...diskData.users]
+    : [...INITIAL_DATA.users];
+
+  // Filter out deleted Sakku / Saaku account
+  users = users.filter(u => 
+    u.id !== 'usr_sakku' && 
+    u.name?.trim().toLowerCase() !== 'sakku' && 
+    u.name?.trim().toLowerCase() !== 'saaku'
+  );
+
+  // Auto-merge seeded accounts if missing so all project accounts are always displayed
+  let usersNeedSave = false;
+  for (const seeded of INITIAL_DATA.users) {
+    const exists = users.some(u => 
+      u.id === seeded.id || 
+      u.code?.trim().toUpperCase() === seeded.code.trim().toUpperCase() ||
+      u.name?.trim().toLowerCase() === seeded.name.trim().toLowerCase()
+    );
+    if (!exists) {
+      users.push(seeded);
+      usersNeedSave = true;
+    }
+  }
+
+  if (usersNeedSave && KV_URL && KV_TOKEN) {
+    await saveKvUsers(users).catch(() => false);
+  }
+
+  // Merge messages: combine candidate sources without dropping any message
+  const allRawMessages: Message[] = [];
+  const seenIds = new Set<string>();
+
+  const candidateLists = [
+    Array.isArray(cloudMessages) ? cloudMessages : [],
+    (diskData && Array.isArray(diskData.messages)) ? diskData.messages : [],
+    (memoryStore && Array.isArray(memoryStore.messages)) ? memoryStore.messages : []
+  ];
+
+  for (const list of candidateLists) {
+    for (const m of list) {
+      if (m && m.id && !seenIds.has(m.id)) {
+        seenIds.add(m.id);
+        allRawMessages.push(m);
       }
     }
-  } catch (error) {
-    console.warn('Could not read DB file, using initial data fallback:', error);
   }
 
-  // 3. Fallback memory store
-  if (memoryStore) {
-    return memoryStore;
-  }
+  // Strict sorting by createdAt timestamp, then by unique ID
+  allRawMessages.sort((a, b) => {
+    const timeDiff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    if (timeDiff !== 0) return timeDiff;
+    return (a.id || '').localeCompare(b.id || '');
+  });
 
-  memoryStore = JSON.parse(JSON.stringify(INITIAL_DATA));
-  await saveDb(memoryStore!).catch(() => {});
-  return memoryStore!;
+  const receipts = await getKvReadReceipts().catch(() => ({}));
+  const messages = allRawMessages.map(m => ({
+    ...m,
+    read: isMessageRead(m, receipts)
+  }));
+
+  const result: DatabaseSchema = {
+    adminCode: INITIAL_DATA.adminCode,
+    users,
+    messages
+  };
+
+  memoryStore = result;
+  return result;
 }
 
 export async function saveDb(data: DatabaseSchema): Promise<void> {
@@ -575,20 +584,35 @@ export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 
     read: false
   };
 
+  // Always append to memoryStore
   if (memoryStore && Array.isArray(memoryStore.messages)) {
-    memoryStore.messages.push(newMsg);
+    if (!memoryStore.messages.some(m => m.id === newMsg.id)) {
+      memoryStore.messages.push(newMsg);
+    }
   }
 
-  if (KV_URL && KV_TOKEN) {
-    // Single fast Redis RPUSH call
-    await pushKvMessage(newMsg);
-  } else {
-    // Local File / In-memory append
-    const db = await getDb();
-    if (!db.messages.some(m => m.id === newMsg.id)) {
-      db.messages.push(newMsg);
-      await saveDb(db);
+  // Always append to local disk file
+  const filePath = getDbFilePath();
+  try {
+    let currentData: DatabaseSchema | null = null;
+    if (fs.existsSync(filePath)) {
+      const fileData = fs.readFileSync(filePath, 'utf-8');
+      currentData = JSON.parse(fileData);
     }
+    if (!currentData || !Array.isArray(currentData.messages)) {
+      currentData = { adminCode: INITIAL_DATA.adminCode, users: INITIAL_DATA.users, messages: [] };
+    }
+    if (!currentData.messages.some((m: any) => m.id === newMsg.id)) {
+      currentData.messages.push(newMsg);
+      fs.writeFileSync(filePath, JSON.stringify(currentData, null, 2), 'utf-8');
+    }
+  } catch (err) {
+    console.warn('Could not write message to disk fallback:', err);
+  }
+
+  // Also push to Upstash KV Cloud Store if available
+  if (KV_URL && KV_TOKEN) {
+    await pushKvMessage(newMsg).catch(() => false);
   }
 
   return newMsg;
