@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getConversationMessages, createMessage, markMessagesAsRead } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 // GET /api/messages returns conversation messages & automatically marks unread received messages as read
 export async function GET(request: Request) {
   try {

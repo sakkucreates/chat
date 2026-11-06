@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createUser, deleteUser, updateUser, getAllUsers, findUserByCode } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 // Simple passcode generator
 function generatePasscode(length: number = 4): string {
   const chars = '1234567890';
@@ -14,7 +17,11 @@ function generatePasscode(length: number = 4): string {
 export async function GET() {
   try {
     const users = await getAllUsers();
-    return NextResponse.json({ users });
+    return NextResponse.json({ users }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate'
+      }
+    });
   } catch (error) {
     console.error('Error fetching admin users:', error);
     return NextResponse.json({ error: 'Failed to fetch users' }, { status: 500 });

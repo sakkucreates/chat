@@ -178,9 +178,12 @@ export default function HomePage() {
       map.set(m.id, m);
     });
 
-    return Array.from(map.values()).sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-    );
+    return Array.from(map.values()).sort((a, b) => {
+      const tA = new Date(a.createdAt).getTime();
+      const tB = new Date(b.createdAt).getTime();
+      if (tA !== tB) return tA - tB;
+      return (a.id || '').localeCompare(b.id || '');
+    });
   }, []);
 
   // Master Link Gate State
@@ -228,8 +231,13 @@ export default function HomePage() {
       setCurrentUser(data.user);
       sessionStorage.setItem('chatpass_user_code', data.user.code);
 
+      // Reset notification tracking for clean slate on login / account switch
+      isInitialLoadRef.current = true;
+      knownMessageIdsRef.current.clear();
+      setIncomingNotifications([]);
+
       // Fetch fresh contacts list for the newly signed in user
-      fetch(`/api/users?userId=${data.user.id}`, { cache: 'no-store' })
+      fetch(`/api/users?userId=${data.user.id}&_t=${Date.now()}`, { cache: 'no-store' })
         .then((r) => r.json())
         .then((d) => {
           if (d.users && Array.isArray(d.users)) {
@@ -262,6 +270,9 @@ export default function HomePage() {
     sessionStorage.removeItem('chatpass_user_code');
     sessionStorage.removeItem('chatpass_disguise');
     localStorage.removeItem('chatpass_user_code');
+    isInitialLoadRef.current = true;
+    knownMessageIdsRef.current.clear();
+    setIncomingNotifications([]);
     setCurrentUser(null);
     setActiveContactId(null);
     setMessages([]);
@@ -364,7 +375,7 @@ export default function HomePage() {
   const fetchUsers = useCallback(async () => {
     if (!currentUser) return;
     try {
-      const url = `/api/users?userId=${currentUser.id}${activeContactId ? `&activeContactId=${activeContactId}` : ''}`;
+      const url = `/api/users?userId=${currentUser.id}${activeContactId ? `&activeContactId=${activeContactId}` : ''}&_t=${Date.now()}`;
       const res = await fetch(url, { cache: 'no-store' });
       const data = await res.json();
       if (data.users && Array.isArray(data.users)) {
@@ -382,17 +393,22 @@ export default function HomePage() {
 
         for (const u of data.users) {
           totalUnread += u.unreadCount || 0;
-          if (u.lastMessage && u.lastMessage.senderId !== currentUser.id) {
-            if (!knownMessageIdsRef.current.has(u.lastMessage.id)) {
-              knownMessageIdsRef.current.add(u.lastMessage.id);
-              if (!isInitialLoadRef.current && (u.unreadCount || 0) > 0) {
+          // Collect all unread messages for this user to trigger a toast for each one
+          const candidateMsgs: Message[] = (u.unreadMessages && Array.isArray(u.unreadMessages) && u.unreadMessages.length > 0)
+            ? u.unreadMessages
+            : (u.lastMessage && u.lastMessage.senderId !== currentUser.id && (u.unreadCount || 0) > 0 ? [u.lastMessage] : []);
+
+          for (const m of candidateMsgs) {
+            if (!knownMessageIdsRef.current.has(m.id)) {
+              knownMessageIdsRef.current.add(m.id);
+              if (!isInitialLoadRef.current) {
                 newToasts.push({
-                  id: u.lastMessage.id,
+                  id: m.id,
                   senderName: u.name,
                   senderAvatar: u.avatar || '👤',
-                  text: u.lastMessage.text || (u.lastMessage.image ? '📷 Sent a photo' : u.lastMessage.audio ? '🎙️ Voice note' : 'New message'),
+                  text: m.text || (m.image ? '📷 Sent a photo' : m.audio ? '🎙️ Voice note' : 'New message'),
                   contact: u,
-                  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                  time: new Date(m.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                 });
               }
             }
@@ -403,7 +419,7 @@ export default function HomePage() {
           isInitialLoadRef.current = false;
         } else if (newToasts.length > 0) {
           // Strictly SILENT: Do not play any notification sound or ring
-          setIncomingNotifications((prev) => [...prev.slice(-3), ...newToasts]);
+          setIncomingNotifications((prev) => [...prev.slice(-4), ...newToasts]);
 
           // Dispatch silent browser desktop notification if permission granted
           if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
@@ -445,7 +461,7 @@ export default function HomePage() {
 
     try {
       const res = await fetch(
-        `/api/messages?userId=${currentUser.id}&contactId=${activeContactId}`,
+        `/api/messages?userId=${currentUser.id}&contactId=${activeContactId}&_t=${Date.now()}`,
         {
           cache: 'no-store',
           signal: controller.signal
@@ -474,6 +490,24 @@ export default function HomePage() {
           setCachedMessages(currentUser.id, activeContactId, merged);
           return merged;
         });
+
+        // Instantly synchronize the active contact's lastMessage in the sidebar
+        if (decryptedMessages.length > 0) {
+          const latestMsg = decryptedMessages[decryptedMessages.length - 1];
+          setUsers((prevUsers) =>
+            prevUsers.map((u) => {
+              if (u.id === activeContactId) {
+                return {
+                  ...u,
+                  lastMessage: latestMsg,
+                  unreadCount: 0
+                };
+              }
+              return u;
+            })
+          );
+        }
+
         markAsRead(activeContactId);
       }
     } catch (err: any) {

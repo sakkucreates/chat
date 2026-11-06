@@ -14,6 +14,9 @@ export interface User {
   typingTo?: string;
   typingAt?: number;
   isTyping?: boolean;
+  unreadCount?: number;
+  lastMessage?: Message | null;
+  unreadMessages?: Message[];
 }
 
 export interface Message {
@@ -529,7 +532,12 @@ export async function getConversationMessages(user1Id: string, user2Id: string, 
   const allMessages = (KV_URL && KV_TOKEN) ? (await getKvMessages()) || [] : (await getDb()).messages;
   let msgs = allMessages
     .filter(m => (m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id))
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    .sort((a, b) => {
+      const tA = new Date(a.createdAt).getTime();
+      const tB = new Date(b.createdAt).getTime();
+      if (tA !== tB) return tA - tB;
+      return (a.id || '').localeCompare(b.id || '');
+    });
 
   if (viewerId) {
     msgs = msgs.filter(m => !m.deletedFor || !m.deletedFor.includes(viewerId));
@@ -575,12 +583,13 @@ export async function getConversationMessages(user1Id: string, user2Id: string, 
 // Atomic Message Creation (guarantees every message is saved without dropping consecutive messages)
 export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 'read'>): Promise<Message> {
   const textTrim = (msgData.text || '').trim();
+  const now = Date.now();
 
   const newMsg: Message = {
     ...msgData,
     text: textTrim,
-    id: 'msg_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now(),
-    createdAt: new Date().toISOString(),
+    id: `msg_${now}_${Math.random().toString(36).substring(2, 9)}`,
+    createdAt: new Date(now).toISOString(),
     read: false
   };
 
