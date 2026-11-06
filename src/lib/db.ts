@@ -36,7 +36,7 @@ export interface DatabaseSchema {
   adminCode: string;
 }
 
-// Clean initial state (Only Admin account)
+// Seeded initial state with all project accounts
 const INITIAL_DATA: DatabaseSchema = {
   adminCode: process.env.ADMIN_CODE || 'ADMIN123',
   users: [
@@ -50,6 +50,28 @@ const INITIAL_DATA: DatabaseSchema = {
       lastSeen: new Date().toISOString(),
       createdAt: new Date().toISOString(),
       notes: 'System Administrator Account'
+    },
+    {
+      id: 'usr_sakku',
+      name: 'Sakku',
+      code: '0796',
+      role: 'user',
+      avatar: '👨‍💻',
+      status: 'online',
+      lastSeen: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      notes: 'Sakku Account'
+    },
+    {
+      id: 'usr_bita',
+      name: 'Bita',
+      code: '2021',
+      role: 'user',
+      avatar: '👩‍💼',
+      status: 'offline',
+      lastSeen: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      notes: 'Bita Account'
     }
   ],
   messages: []
@@ -211,7 +233,25 @@ export async function getDb(): Promise<DatabaseSchema> {
     if (KV_URL && KV_TOKEN) {
       const rawUsers = await getKvUsers().catch(() => null);
       const rawMessages = await getKvMessages().catch(() => null);
-      const users = (Array.isArray(rawUsers) && rawUsers.length > 0) ? [...rawUsers] : [...INITIAL_DATA.users];
+      const users: User[] = (Array.isArray(rawUsers) && rawUsers.length > 0) ? [...rawUsers] : [...INITIAL_DATA.users];
+
+      // Auto-merge seeded accounts if missing from KV store so all project accounts are always displayed
+      let kvUsersNeedSave = false;
+      for (const seeded of INITIAL_DATA.users) {
+        const exists = users.some(u => 
+          u.id === seeded.id || 
+          u.code?.trim().toUpperCase() === seeded.code.trim().toUpperCase() ||
+          u.name?.trim().toLowerCase() === seeded.name.trim().toLowerCase()
+        );
+        if (!exists) {
+          users.push(seeded);
+          kvUsersNeedSave = true;
+        }
+      }
+      if (kvUsersNeedSave) {
+        await saveKvUsers(users).catch(() => false);
+      }
+
       const messages = Array.isArray(rawMessages) ? rawMessages : [];
       return {
         adminCode: INITIAL_DATA.adminCode,
@@ -230,6 +270,23 @@ export async function getDb(): Promise<DatabaseSchema> {
       const fileData = fs.readFileSync(filePath, 'utf-8');
       const parsed = JSON.parse(fileData);
       if (parsed && Array.isArray(parsed.users)) {
+        let fileNeedsSave = false;
+        for (const seeded of INITIAL_DATA.users) {
+          const exists = parsed.users.some((u: any) => 
+            u.id === seeded.id || 
+            u.code?.trim().toUpperCase() === seeded.code.trim().toUpperCase() ||
+            u.name?.trim().toLowerCase() === seeded.name.trim().toLowerCase()
+          );
+          if (!exists) {
+            parsed.users.push(seeded);
+            fileNeedsSave = true;
+          }
+        }
+        if (fileNeedsSave) {
+          try {
+            fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2), 'utf-8');
+          } catch {}
+        }
         memoryStore = parsed;
         return parsed;
       }
@@ -291,12 +348,6 @@ export async function findUserByCode(code: string): Promise<User | null> {
 
     const normalized = raw.replace(/^@+/, '').toUpperCase();
 
-    // Special admin shortcut codes
-    if (normalized === '2021') {
-      const admin = db.users.find(u => u.role === 'admin') || db.users[0];
-      return admin || null;
-    }
-
     // 1. Try code match (with or without @ prefix, case-insensitive)
     let user = db.users.find(u => {
       if (!u || !u.code) return false;
@@ -313,15 +364,20 @@ export async function findUserByCode(code: string): Promise<User | null> {
       });
     }
 
+    // 3. Fallback: check admin codes if not found yet
+    if (!user && (normalized === 'ADMIN123' || normalized === 'ADMIN')) {
+      user = db.users.find(u => u.role === 'admin') || db.users[0];
+    }
+
     return user || null;
   } catch (err) {
     console.error('Error in findUserByCode:', err);
     const raw = code ? code.trim() : '';
     const normalized = raw.replace(/^@+/, '').toUpperCase();
-    if (normalized === '2021') {
-      return INITIAL_DATA.users[0];
-    }
-    return INITIAL_DATA.users.find(u => u.code.trim().replace(/^@+/, '').toUpperCase() === normalized) || null;
+    return INITIAL_DATA.users.find(u => 
+      u.code.trim().replace(/^@+/, '').toUpperCase() === normalized ||
+      u.name.trim().toUpperCase() === normalized
+    ) || null;
   }
 }
 

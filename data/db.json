@@ -8,9 +8,31 @@
       "role": "admin",
       "avatar": "🛡️",
       "status": "online",
-      "lastSeen": "2026-09-24T07:16:30.478Z",
+      "lastSeen": "2026-11-06T12:00:00.000Z",
       "createdAt": "2026-09-24T07:16:30.479Z",
       "notes": "System Administrator Account"
+    },
+    {
+      "id": "usr_sakku",
+      "name": "Sakku",
+      "code": "0796",
+      "role": "user",
+      "avatar": "👨‍💻",
+      "status": "online",
+      "lastSeen": "2026-11-06T12:00:00.000Z",
+      "createdAt": "2026-09-24T07:16:30.479Z",
+      "notes": "Sakku Account"
+    },
+    {
+      "id": "usr_bita",
+      "name": "Bita",
+      "code": "2021",
+      "role": "user",
+      "avatar": "👩‍💼",
+      "status": "offline",
+      "lastSeen": "2026-11-06T12:00:00.000Z",
+      "createdAt": "2026-09-24T07:16:30.479Z",
+      "notes": "Bita Account"
     }
   ],
   "messages": [
