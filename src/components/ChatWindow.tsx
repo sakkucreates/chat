@@ -176,12 +176,11 @@ export default function ChatWindow({
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if ((!text.trim() && !selectedImage && !selectedVideo) || sending) return;
+    if (!text.trim() && !selectedImage && !selectedVideo) return;
 
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     if (onTyping) onTyping(false);
 
-    setSending(true);
     const msgText = text;
     const msgImg = selectedImage;
     const msgVid = selectedVideo;
@@ -196,8 +195,6 @@ export default function ChatWindow({
       await onSendMessage(msgText, msgImg || undefined, msgVid || undefined);
     } catch (err) {
       console.error('Failed to send message:', err);
-    } finally {
-      setSending(false);
     }
   };
 

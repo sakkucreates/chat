@@ -126,7 +126,7 @@ async function saveKvUsers(users: User[]): Promise<boolean> {
   return res !== null;
 }
 
-// ATOMIC Redis List Read via LRANGE (reads all stored messages atomically with deduplication)
+// ATOMIC Redis List Read via LRANGE (reads all stored messages atomically with deduplication by unique ID)
 async function getKvMessages(): Promise<Message[] | null> {
   const result = await executeKvCommand(['LRANGE', 'chatpass_messages', '0', '-1']);
   if (Array.isArray(result)) {
@@ -135,18 +135,13 @@ async function getKvMessages(): Promise<Message[] | null> {
         .map((item: any) => (typeof item === 'string' ? JSON.parse(item) : item))
         .filter((m: any) => m && typeof m === 'object' && m.id && m.senderId && m.receiverId);
 
-      // Deduplicate by ID and content signature (sender + receiver + text + image + 3-sec window)
+      // Deduplicate strictly by ID only (never drop messages with identical text or quick timestamps)
       const seenIds = new Set<string>();
-      const seenSignatures = new Set<string>();
       const uniqueMessages: Message[] = [];
 
       for (const m of parsed) {
-        const timeBucket = Math.floor(new Date(m.createdAt).getTime() / 3000);
-        const sig = `${m.senderId}_${m.receiverId}_${(m.text || '').trim()}_${m.image || ''}_${timeBucket}`;
-
-        if (!seenIds.has(m.id) && !seenSignatures.has(sig)) {
+        if (!seenIds.has(m.id)) {
           seenIds.add(m.id);
-          seenSignatures.add(sig);
           uniqueMessages.push(m);
         }
       }
@@ -162,6 +157,45 @@ async function getKvMessages(): Promise<Message[] | null> {
 async function pushKvMessage(message: Message): Promise<boolean> {
   const res = await executeKvCommand(['RPUSH', 'chatpass_messages', JSON.stringify(message)]);
   return res !== null;
+}
+
+// Separate KV key for read receipts to avoid race conditions with message deletion/rewriting
+let memoryReadReceipts: Record<string, string> = {};
+
+export async function getKvReadReceipts(): Promise<Record<string, string>> {
+  if (!KV_URL || !KV_TOKEN) return memoryReadReceipts;
+  try {
+    const res = await executeKvCommand(['GET', 'chatpass_read_receipts']);
+    if (res) {
+      const parsed = typeof res === 'string' ? JSON.parse(res) : res;
+      return parsed && typeof parsed === 'object' ? { ...memoryReadReceipts, ...parsed } : memoryReadReceipts;
+    }
+  } catch {}
+  return memoryReadReceipts;
+}
+
+export async function setKvReadReceipt(senderId: string, receiverId: string, timestamp: string): Promise<void> {
+  const key = `${senderId}_${receiverId}`;
+  memoryReadReceipts[key] = timestamp;
+  if (!KV_URL || !KV_TOKEN) return;
+  try {
+    const receipts = await getKvReadReceipts();
+    receipts[key] = timestamp;
+    await executeKvCommand(['SET', 'chatpass_read_receipts', JSON.stringify(receipts)]);
+  } catch (err) {
+    console.warn('setKvReadReceipt error:', err);
+  }
+}
+
+export function isMessageRead(m: Message, receipts?: Record<string, string>): boolean {
+  if (m.read) return true;
+  const map = receipts || memoryReadReceipts;
+  const key = `${m.senderId}_${m.receiverId}`;
+  const readTime = map[key] || memoryReadReceipts[key];
+  if (readTime && new Date(m.createdAt).getTime() <= new Date(readTime).getTime()) {
+    return true;
+  }
+  return false;
 }
 
 // Separate KV key for reactions — completely independent from message list operations
@@ -249,7 +283,11 @@ export async function getDb(): Promise<DatabaseSchema> {
         await saveKvUsers(users).catch(() => false);
       }
 
-      const messages = Array.isArray(rawMessages) ? rawMessages : [];
+      const receipts = await getKvReadReceipts().catch(() => ({}));
+      const messages = (Array.isArray(rawMessages) ? rawMessages : []).map(m => ({
+        ...m,
+        read: isMessageRead(m, receipts)
+      }));
       return {
         adminCode: INITIAL_DATA.adminCode,
         users,
@@ -507,6 +545,13 @@ export async function getConversationMessages(user1Id: string, user2Id: string, 
     // If decryption module cannot run in DB worker, safely fallback
   }
 
+  // Attach read status from atomic read receipts
+  const receipts = await getKvReadReceipts().catch(() => ({}));
+  msgs = msgs.map(m => ({
+    ...m,
+    read: isMessageRead(m, receipts)
+  }));
+
   // Merge reactions from separate KV store (avoids race condition with message polling)
   if (KV_URL && KV_TOKEN) {
     const kvReactions = await getKvReactions().catch(() => ({} as Record<string, { emoji: string; userId: string }[]>));
@@ -518,38 +563,9 @@ export async function getConversationMessages(user1Id: string, user2Id: string, 
   return msgs;
 }
 
-// In-memory signature lock map to prevent duplicate requests without HTTP REST roundtrip
-const recentSentSignatures = new Map<string, number>();
-
-// Atomic Message Creation (Ultra-fast single REST execution with memory signature lock)
+// Atomic Message Creation (guarantees every message is saved without dropping consecutive messages)
 export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 'read'>): Promise<Message> {
   const textTrim = (msgData.text || '').trim();
-  const imgStr = msgData.image || '';
-  const vidStr = msgData.video || '';
-  const audStr = msgData.audio || '';
-  const now = Date.now();
-  const sig = `${msgData.senderId}_${msgData.receiverId}_${textTrim}_${imgStr}_${vidStr}_${audStr}`;
-
-  // Fast In-Memory Deduplication Check (3-second window)
-  const lastSentTime = recentSentSignatures.get(sig);
-  if (lastSentTime && (now - lastSentTime < 3000)) {
-    if (memoryStore && Array.isArray(memoryStore.messages)) {
-      const match = memoryStore.messages.find(m =>
-        m.senderId === msgData.senderId &&
-        m.receiverId === msgData.receiverId &&
-        (m.text || '').trim() === textTrim &&
-        (m.image || '') === imgStr &&
-        (m.video || '') === vidStr &&
-        (m.audio || '') === audStr
-      );
-      if (match) return match;
-    }
-  }
-
-  recentSentSignatures.set(sig, now);
-  if (recentSentSignatures.size > 200) {
-    recentSentSignatures.clear();
-  }
 
   const newMsg: Message = {
     ...msgData,
@@ -560,9 +576,7 @@ export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 
   };
 
   if (memoryStore && Array.isArray(memoryStore.messages)) {
-    if (!memoryStore.messages.some(m => m.id === newMsg.id)) {
-      memoryStore.messages.push(newMsg);
-    }
+    memoryStore.messages.push(newMsg);
   }
 
   if (KV_URL && KV_TOKEN) {
@@ -596,20 +610,23 @@ async function saveKvMessages(messages: Message[]): Promise<boolean> {
   }
 }
 
+// Mark messages as read using atomic read receipts (never deletes or overwrites the message list!)
 export async function markMessagesAsRead(senderId: string, receiverId: string): Promise<void> {
-  const db = await getDb();
-  let updated = false;
-  db.messages.forEach(m => {
-    if (m.senderId === senderId && m.receiverId === receiverId && !m.read) {
-      m.read = true;
-      updated = true;
+  const now = new Date().toISOString();
+  await setKvReadReceipt(senderId, receiverId, now);
+
+  if (!KV_URL || !KV_TOKEN) {
+    const db = await getDb();
+    let updated = false;
+    db.messages.forEach(m => {
+      if (m.senderId === senderId && m.receiverId === receiverId && !m.read) {
+        m.read = true;
+        updated = true;
+      }
+    });
+    if (updated) {
+      await saveDb(db).catch(() => {});
     }
-  });
-  if (updated) {
-    if (KV_URL && KV_TOKEN) {
-      await saveKvMessages(db.messages).catch(() => false);
-    }
-    await saveDb(db).catch(() => {});
   }
 }
 

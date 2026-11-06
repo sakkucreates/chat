@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllUsers, updateUser, getDb } from '@/lib/db';
+import { getAllUsers, updateUser, getDb, isMessageRead, getKvReadReceipts } from '@/lib/db';
 
 export async function GET(request: Request) {
   try {
@@ -16,6 +16,7 @@ export async function GET(request: Request) {
 
     const users = await getAllUsers(activeUserId || undefined);
     const db = await getDb();
+    const receipts = await getKvReadReceipts().catch(() => ({}));
 
     // Map users with last message info & unread counts relative to activeUserId
     const { decryptText } = await import('@/lib/crypto');
@@ -46,7 +47,7 @@ export async function GET(request: Request) {
           unreadCount = 0;
         } else {
           unreadCount = db.messages.filter(
-            m => m.senderId === user.id && m.receiverId === activeUserId && !m.read
+            m => m.senderId === user.id && m.receiverId === activeUserId && !isMessageRead(m, receipts)
           ).length;
         }
       }

@@ -79,8 +79,59 @@ export default function HomePage() {
 
   // Ref to track in-flight message polling AbortController
   const abortControllerRef = useRef<AbortController | null>(null);
-  const sendingRef = useRef<boolean>(false);
   const deletedMessageIdsRef = useRef<Set<string>>(new Set());
+
+  // Real-time audio notification & toast state
+  const knownMessageIdsRef = useRef<Set<string>>(new Set());
+  const isInitialLoadRef = useRef<boolean>(true);
+  const [incomingNotification, setIncomingNotification] = useState<{
+    senderName: string;
+    senderAvatar: string;
+    text: string;
+    contact: User;
+  } | null>(null);
+
+  // Soft pleasant Web Audio notification chime
+  const playNotificationSound = useCallback(() => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      const now = ctx.currentTime;
+      osc.frequency.setValueAtTime(587.33, now); // D5
+      osc.frequency.setValueAtTime(880, now + 0.09); // A5
+
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.38);
+    } catch {}
+  }, []);
+
+  // Request browser notification permission on initial user action
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
+  // Auto-dismiss incoming message toast after 5s
+  useEffect(() => {
+    if (incomingNotification) {
+      const timer = setTimeout(() => {
+        setIncomingNotification(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [incomingNotification]);
 
   // Derived Active Contact Object (stable primitive string lookup)
   const activeContact = useMemo(
@@ -120,20 +171,34 @@ export default function HomePage() {
     }
   }, []);
 
-  // Helper function to safely merge & deduplicate messages by ID and content signature
+  // Helper function to safely merge & deduplicate messages by ID
   const mergeMessages = useCallback((existingMsgs: Message[], incomingMsgs: Message[]): Message[] => {
     const map = new Map<string, Message>();
-    const seenSigs = new Set<string>();
 
-    [...existingMsgs, ...incomingMsgs].forEach((m) => {
-      if (!m || !m.id) return;
-      const timeBucket = Math.floor(new Date(m.createdAt).getTime() / 3000);
-      const sig = `${m.senderId}_${m.receiverId}_${(m.text || '').trim()}_${m.image || ''}_${timeBucket}`;
-      
-      if (!seenSigs.has(sig)) {
-        seenSigs.add(sig);
+    // Add existing messages to map
+    existingMsgs.forEach((m) => {
+      if (m && m.id) {
         map.set(m.id, m);
       }
+    });
+
+    // Merge incoming messages, matching or replacing optimistic temp messages
+    incomingMsgs.forEach((m) => {
+      if (!m || !m.id) return;
+      // If there is an optimistic temp message matching this confirmed message, replace it
+      for (const [key, ex] of map.entries()) {
+        if (
+          key.startsWith('temp_') &&
+          ex.senderId === m.senderId &&
+          ex.receiverId === m.receiverId &&
+          (ex.text || '') === (m.text || '') &&
+          Math.abs(new Date(ex.createdAt).getTime() - new Date(m.createdAt).getTime()) < 15000
+        ) {
+          map.delete(key);
+          break;
+        }
+      }
+      map.set(m.id, m);
     });
 
     return Array.from(map.values()).sort(
@@ -318,20 +383,69 @@ export default function HomePage() {
     }
   }, [currentUser]);
 
-  // Poll Users & Contact List Status
+  // Poll Users & Contact List Status with Audio/Visual Notification Detection
   const fetchUsers = useCallback(async () => {
     if (!currentUser) return;
     try {
       const url = `/api/users?userId=${currentUser.id}${activeContactId ? `&activeContactId=${activeContactId}` : ''}`;
       const res = await fetch(url, { cache: 'no-store' });
       const data = await res.json();
-      if (data.users) {
+      if (data.users && Array.isArray(data.users)) {
         setUsers(data.users);
+
+        let newIncomingMsg: { contact: User; msg: Message } | null = null;
+        let totalUnread = 0;
+
+        for (const u of data.users) {
+          totalUnread += u.unreadCount || 0;
+          if (u.lastMessage && u.lastMessage.senderId !== currentUser.id) {
+            if (!knownMessageIdsRef.current.has(u.lastMessage.id)) {
+              knownMessageIdsRef.current.add(u.lastMessage.id);
+              if (!isInitialLoadRef.current && (u.unreadCount || 0) > 0) {
+                newIncomingMsg = { contact: u, msg: u.lastMessage };
+              }
+            }
+          }
+        }
+
+        if (isInitialLoadRef.current) {
+          isInitialLoadRef.current = false;
+        } else if (newIncomingMsg) {
+          // Play soft notification chime
+          playNotificationSound();
+
+          // Show floating toast notification banner
+          setIncomingNotification({
+            senderName: newIncomingMsg.contact.name,
+            senderAvatar: newIncomingMsg.contact.avatar || '👤',
+            text: newIncomingMsg.msg.text || (newIncomingMsg.msg.image ? '📷 Sent a photo' : newIncomingMsg.msg.audio ? '🎙️ Voice note' : 'New message'),
+            contact: newIncomingMsg.contact
+          });
+
+          // Dispatch browser desktop notification if permission granted
+          if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+              new Notification(newIncomingMsg.contact.name, {
+                body: newIncomingMsg.msg.text || 'Sent you a new message',
+                icon: '/favicon.ico'
+              });
+            } catch {}
+          }
+        }
+
+        // Update document title with unread count
+        if (typeof document !== 'undefined') {
+          if (totalUnread > 0) {
+            document.title = `(${totalUnread}) New Message - ChatPass`;
+          } else {
+            document.title = 'ChatPass';
+          }
+        }
       }
     } catch {
       // Ignored
     }
-  }, [currentUser, activeContactId]);
+  }, [currentUser, activeContactId, playNotificationSound]);
 
   // Poll Conversation Messages (with deduplication, caching & cancellation)
   const fetchMessages = useCallback(async () => {
@@ -505,8 +619,7 @@ export default function HomePage() {
   };
 
   const handleSendMessage = async (text: string, image?: string, video?: string, audio?: string) => {
-    if (!currentUser || !activeContactId || sendingRef.current) return;
-    sendingRef.current = true;
+    if (!currentUser || !activeContactId) return;
 
     // Reset typing immediately when message is sent
     handleTyping(false);
@@ -532,6 +645,19 @@ export default function HomePage() {
       setCachedMessages(currentUser.id, activeContactId, merged);
       return merged;
     });
+
+    // Instantly update sidebar contact lastMessage so it displays on sidebar immediately!
+    setUsers((prevUsers) =>
+      prevUsers.map((u) => {
+        if (u.id === activeContactId) {
+          return {
+            ...u,
+            lastMessage: optimisticMsg
+          };
+        }
+        return u;
+      })
+    );
 
     try {
       // Send clean plain text directly over the wire
@@ -562,12 +688,21 @@ export default function HomePage() {
           setCachedMessages(currentUser.id, activeContactId, merged);
           return merged;
         });
+        setUsers((prevUsers) =>
+          prevUsers.map((u) => {
+            if (u.id === activeContactId) {
+              return {
+                ...u,
+                lastMessage: confirmedMsg
+              };
+            }
+            return u;
+          })
+        );
         fetchUsers();
       }
     } catch {
       // Ignored
-    } finally {
-      sendingRef.current = false;
     }
   };
 
@@ -750,6 +885,43 @@ export default function HomePage() {
           }}
           onSwitchUser={handleSwitchUser}
         />
+      )}
+
+      {/* Realtime Incoming Message Toast Notification Banner on Alpha / User Side */}
+      {incomingNotification && (
+        <div
+          onClick={() => {
+            handleSelectContact(incomingNotification.contact);
+            setIncomingNotification(null);
+          }}
+          className="fixed top-5 right-5 z-50 flex items-center gap-3 p-3.5 bg-slate-900/95 dark:bg-slate-900/95 border border-indigo-500/50 text-white rounded-2xl shadow-2xl backdrop-blur-md cursor-pointer hover:scale-102 active:scale-95 transition-all max-w-sm animate-fadeIn"
+          style={{ boxShadow: '0 10px 30px -5px rgba(99, 102, 241, 0.4)' }}
+        >
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-xl shrink-0">
+            {incomingNotification.senderAvatar}
+          </div>
+          <div className="flex-1 min-w-0 pr-2">
+            <div className="flex items-center justify-between gap-2">
+              <h5 className="font-bold text-xs text-indigo-300 truncate">
+                {incomingNotification.senderName}
+              </h5>
+              <span className="text-[10px] text-emerald-400 font-medium">New Message</span>
+            </div>
+            <p className="text-xs text-slate-200 truncate mt-0.5 font-medium">
+              {incomingNotification.text}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIncomingNotification(null);
+            }}
+            className="text-slate-400 hover:text-white p-1 rounded-lg text-sm"
+          >
+            ✕
+          </button>
+        </div>
       )}
     </main>
   );
