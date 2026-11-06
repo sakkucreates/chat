@@ -14,18 +14,20 @@ import {
   Shield,
   Sparkles,
   Edit2,
-  AlertTriangle
+  AlertTriangle,
+  UserCheck
 } from 'lucide-react';
 import { User } from '@/lib/db';
 
 interface AdminDashboardProps {
   onClose: () => void;
   onSelectUserForChat: (user: User) => void;
+  onSwitchUser?: (userCode: string) => void;
 }
 
 const EMOJI_AVATARS = ['👨‍💻', '👩‍💼', '🧑‍🎨', '👨‍🏫', '👩‍🔬', '👨‍🚀', '🐱', '🦊', '🦁', '🐼', '⭐', '🚀'];
 
-export default function AdminDashboard({ onClose, onSelectUserForChat }: AdminDashboardProps) {
+export default function AdminDashboard({ onClose, onSelectUserForChat, onSwitchUser }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<'create' | 'manage'>('create');
   const [users, setUsers] = useState<User[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -314,6 +316,19 @@ export default function AdminDashboard({ onClose, onSelectUserForChat }: AdminDa
                       <Share2 className="w-4 h-4" />
                       <span>Share on WhatsApp</span>
                     </button>
+                    {onSwitchUser && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSwitchUser(createdUser.code);
+                          onClose();
+                        }}
+                        className="flex-1 min-w-[140px] bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white text-xs font-semibold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-md active:scale-95"
+                      >
+                        <UserCheck className="w-4 h-4" />
+                        <span>Login as {createdUser.name}</span>
+                      </button>
+                    )}
                     <button
                       onClick={() => setCreatedUser(null)}
                       className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-xl transition-all"
@@ -484,6 +499,20 @@ export default function AdminDashboard({ onClose, onSelectUserForChat }: AdminDa
                         <MessageSquare className="w-3.5 h-3.5" />
                         <span>Chat</span>
                       </button>
+
+                      {onSwitchUser && (
+                        <button
+                          onClick={() => {
+                            onSwitchUser(u.code);
+                            onClose();
+                          }}
+                          title={`Switch account to ${u.name}`}
+                          className="px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 rounded-xl text-xs font-medium flex items-center gap-1 transition-all active:scale-95"
+                        >
+                          <UserCheck className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Switch</span>
+                        </button>
+                      )}
 
                       <button
                         onClick={() => copyToClipboard(getDirectLink(u.code), 'link')}

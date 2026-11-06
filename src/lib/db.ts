@@ -96,7 +96,12 @@ async function getKvUsers(): Promise<User[] | null> {
   const result = await executeKvCommand(['GET', 'chatpass_users']);
   if (result) {
     try {
-      const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+      let parsed = typeof result === 'string' ? JSON.parse(result) : result;
+      if (typeof parsed === 'string') {
+        try {
+          parsed = JSON.parse(parsed);
+        } catch {}
+      }
       return Array.isArray(parsed) ? parsed : null;
     } catch {
       return null;
@@ -206,7 +211,7 @@ export async function getDb(): Promise<DatabaseSchema> {
     if (KV_URL && KV_TOKEN) {
       const rawUsers = await getKvUsers().catch(() => null);
       const rawMessages = await getKvMessages().catch(() => null);
-      const users = (Array.isArray(rawUsers) && rawUsers.length > 0) ? rawUsers : INITIAL_DATA.users;
+      const users = (Array.isArray(rawUsers) && rawUsers.length > 0) ? [...rawUsers] : [...INITIAL_DATA.users];
       const messages = Array.isArray(rawMessages) ? rawMessages : [];
       return {
         adminCode: INITIAL_DATA.adminCode,
@@ -281,20 +286,42 @@ export async function findUserByCode(code: string): Promise<User | null> {
   try {
     const db = await getDb();
     if (!db || !Array.isArray(db.users)) return INITIAL_DATA.users[0];
-    const trimmed = code.trim();
-    if (trimmed === '@2021' || trimmed === '2021') {
+    const raw = code ? code.trim() : '';
+    if (!raw) return null;
+
+    const normalized = raw.replace(/^@+/, '').toUpperCase();
+
+    // Special admin shortcut codes
+    if (normalized === '2021') {
       const admin = db.users.find(u => u.role === 'admin') || db.users[0];
       return admin || null;
     }
-    const user = db.users.find(u => u && u.code && u.code.trim().toUpperCase() === trimmed.toUpperCase());
+
+    // 1. Try code match (with or without @ prefix, case-insensitive)
+    let user = db.users.find(u => {
+      if (!u || !u.code) return false;
+      const uNorm = u.code.trim().replace(/^@+/, '').toUpperCase();
+      return uNorm === normalized || u.code.trim().toUpperCase() === raw.toUpperCase();
+    });
+
+    // 2. Fallback: try user name match (case-insensitive)
+    if (!user) {
+      user = db.users.find(u => {
+        if (!u || !u.name) return false;
+        const nameNorm = u.name.trim().replace(/^@+/, '').toUpperCase();
+        return nameNorm === normalized || u.name.trim().toUpperCase() === raw.toUpperCase();
+      });
+    }
+
     return user || null;
   } catch (err) {
     console.error('Error in findUserByCode:', err);
-    const trimmed = code.trim();
-    if (trimmed === '@2021' || trimmed === '2021') {
+    const raw = code ? code.trim() : '';
+    const normalized = raw.replace(/^@+/, '').toUpperCase();
+    if (normalized === '2021') {
       return INITIAL_DATA.users[0];
     }
-    return INITIAL_DATA.users.find(u => u.code.trim().toUpperCase() === trimmed.toUpperCase()) || null;
+    return INITIAL_DATA.users.find(u => u.code.trim().replace(/^@+/, '').toUpperCase() === normalized) || null;
   }
 }
 
@@ -345,15 +372,23 @@ export async function setTypingStatus(userId: string, targetId: string, isTyping
 
 export async function createUser(userData: Omit<User, 'id' | 'createdAt' | 'status' | 'lastSeen'>): Promise<User> {
   const db = await getDb();
+  const cleanCode = userData.code 
+    ? userData.code.trim().replace(/^@+/, '') 
+    : Math.floor(1000 + Math.random() * 9000).toString();
+
   const newUser: User = {
     ...userData,
+    code: cleanCode,
     id: 'usr_' + Math.random().toString(36).substring(2, 9),
     status: 'offline',
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString()
   };
-  db.users.push(newUser);
-  await saveDb(db).catch(() => {});
+
+  if (!db.users.some(u => u.id === newUser.id)) {
+    db.users.push(newUser);
+  }
+  await saveDb(db);
   return newUser;
 }
 

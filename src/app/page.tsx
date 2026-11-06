@@ -185,6 +185,17 @@ export default function HomePage() {
 
       setCurrentUser(data.user);
       sessionStorage.setItem('chatpass_user_code', data.user.code);
+
+      // Fetch fresh contacts list for the newly signed in user
+      fetch(`/api/users?userId=${data.user.id}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.users && Array.isArray(d.users)) {
+            setUsers(d.users);
+          }
+        })
+        .catch(() => {});
+
       return true;
     } catch {
       setAuthError('Connection error. Please try again.');
@@ -213,6 +224,25 @@ export default function HomePage() {
     setActiveContactId(null);
     setMessages([]);
     setMobileView('contacts');
+  };
+
+  // Direct Account Switch Flow
+  const handleSwitchUser = async (targetCode: string) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    if (currentUser) {
+      fetch('/api/users/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: currentUser.id, status: 'offline' })
+      }).catch(() => {});
+    }
+    setActiveContactId(null);
+    setMessages([]);
+    setShowAdminModal(false);
+    setMobileView('contacts');
+    await handleLogin(targetCode);
   };
 
   // Session verification on load
@@ -718,6 +748,7 @@ export default function HomePage() {
           onSelectUserForChat={(user) => {
             handleSelectContact(user);
           }}
+          onSwitchUser={handleSwitchUser}
         />
       )}
     </main>

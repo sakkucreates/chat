@@ -30,13 +30,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'User name is required' }, { status: 400 });
     }
 
-    let finalCode = code ? code.trim() : generatePasscode(4);
+    let finalCode = code ? code.trim().replace(/^@+/, '') : generatePasscode(4);
 
     // Check code uniqueness
     const existing = await findUserByCode(finalCode);
     if (existing) {
       if (code) {
-        return NextResponse.json({ error: 'This access code is already in use' }, { status: 400 });
+        return NextResponse.json({ error: 'This access code is already in use. Please choose another.' }, { status: 400 });
       } else {
         finalCode = generatePasscode(6);
       }

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Search, Shield, LogOut, MessageSquarePlus, User as UserIcon, Sun, Moon } from 'lucide-react';
+import { Search, Shield, LogOut, MessageSquarePlus, User as UserIcon, Sun, Moon, Users } from 'lucide-react';
 import { User, Message } from '@/lib/db';
 
 interface ContactsSidebarProps {
@@ -128,7 +128,20 @@ export default function ContactsSidebar({
 
           <button
             onClick={onLogout}
-            title="Logout & Switch User Account"
+            title="Switch User Account"
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-all ${
+              isLight
+                ? 'bg-white hover:bg-indigo-50 text-indigo-600 border-[#e9edef] shadow-xs'
+                : 'bg-slate-800 hover:bg-indigo-600/20 text-indigo-300 border-slate-700/60 hover:border-indigo-500/40'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Switch</span>
+          </button>
+
+          <button
+            onClick={onLogout}
+            title="Logout"
             className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-all ${
               isLight
                 ? 'bg-white hover:bg-rose-50 text-slate-600 hover:text-rose-600 border-[#e9edef] shadow-xs'
