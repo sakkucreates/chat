@@ -52,17 +52,6 @@ const INITIAL_DATA: DatabaseSchema = {
       notes: 'System Administrator Account'
     },
     {
-      id: 'usr_sakku',
-      name: 'Sakku',
-      code: '0796',
-      role: 'user',
-      avatar: '👨‍💻',
-      status: 'online',
-      lastSeen: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      notes: 'Sakku Account'
-    },
-    {
       id: 'usr_bita',
       name: 'Bita',
       code: '2021',
@@ -233,10 +222,18 @@ export async function getDb(): Promise<DatabaseSchema> {
     if (KV_URL && KV_TOKEN) {
       const rawUsers = await getKvUsers().catch(() => null);
       const rawMessages = await getKvMessages().catch(() => null);
-      const users: User[] = (Array.isArray(rawUsers) && rawUsers.length > 0) ? [...rawUsers] : [...INITIAL_DATA.users];
+      let users: User[] = (Array.isArray(rawUsers) && rawUsers.length > 0) ? [...rawUsers] : [...INITIAL_DATA.users];
+
+      // Filter out deleted Sakku / Saaku account
+      const filteredUsers = users.filter(u => 
+        u.id !== 'usr_sakku' && 
+        u.name?.trim().toLowerCase() !== 'sakku' && 
+        u.name?.trim().toLowerCase() !== 'saaku'
+      );
+      let kvUsersNeedSave = filteredUsers.length !== users.length;
+      users = filteredUsers;
 
       // Auto-merge seeded accounts if missing from KV store so all project accounts are always displayed
-      let kvUsersNeedSave = false;
       for (const seeded of INITIAL_DATA.users) {
         const exists = users.some(u => 
           u.id === seeded.id || 
@@ -270,7 +267,15 @@ export async function getDb(): Promise<DatabaseSchema> {
       const fileData = fs.readFileSync(filePath, 'utf-8');
       const parsed = JSON.parse(fileData);
       if (parsed && Array.isArray(parsed.users)) {
-        let fileNeedsSave = false;
+        // Filter out deleted Sakku / Saaku account
+        const filtered = parsed.users.filter((u: any) => 
+          u.id !== 'usr_sakku' && 
+          u.name?.trim().toLowerCase() !== 'sakku' && 
+          u.name?.trim().toLowerCase() !== 'saaku'
+        );
+        let fileNeedsSave = filtered.length !== parsed.users.length;
+        parsed.users = filtered;
+
         for (const seeded of INITIAL_DATA.users) {
           const exists = parsed.users.some((u: any) => 
             u.id === seeded.id || 
