@@ -152,30 +152,28 @@ export default function HomePage() {
   const mergeMessages = useCallback((existingMsgs: Message[], incomingMsgs: Message[]): Message[] => {
     const map = new Map<string, Message>();
 
-    // Add existing messages to map
-    existingMsgs.forEach((m) => {
+    // Add all messages confirmed by the server
+    incomingMsgs.forEach((m) => {
       if (m && m.id) {
         map.set(m.id, m);
       }
     });
 
-    // Merge incoming messages, matching or replacing optimistic temp messages
-    incomingMsgs.forEach((m) => {
+    // Keep pending optimistic temporary messages that have not yet been confirmed by server
+    existingMsgs.forEach((m) => {
       if (!m || !m.id) return;
-      // If there is an optimistic temp message matching this confirmed message, replace it
-      for (const [key, ex] of map.entries()) {
-        if (
-          key.startsWith('temp_') &&
-          ex.senderId === m.senderId &&
-          ex.receiverId === m.receiverId &&
-          (ex.text || '') === (m.text || '') &&
-          Math.abs(new Date(ex.createdAt).getTime() - new Date(m.createdAt).getTime()) < 15000
-        ) {
-          map.delete(key);
-          break;
+      if (m.id.startsWith('temp_')) {
+        const alreadyConfirmed = incomingMsgs.some(
+          (inc) =>
+            inc.senderId === m.senderId &&
+            inc.receiverId === m.receiverId &&
+            (inc.text || '') === (m.text || '') &&
+            Math.abs(new Date(inc.createdAt).getTime() - new Date(m.createdAt).getTime()) < 15000
+        );
+        if (!alreadyConfirmed) {
+          map.set(m.id, m);
         }
       }
-      map.set(m.id, m);
     });
 
     return Array.from(map.values()).sort((a, b) => {
@@ -410,19 +408,21 @@ export default function HomePage() {
         }
 
         if (newToasts.length > 0) {
-          // Strictly SILENT: Do not play any notification sound or ring
-          setIncomingNotifications((prev) => [...prev.slice(-4), ...newToasts]);
+          if (!isInitialLoadRef.current) {
+            // Strictly SILENT: Do not play any notification sound or ring
+            setIncomingNotifications((prev) => [...prev.slice(-4), ...newToasts]);
 
-          // Dispatch silent browser desktop notification if permission granted (not on first load)
-          if (!isInitialLoadRef.current && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-            for (const t of newToasts) {
-              try {
-                new Notification(t.senderName, {
-                  body: t.text,
-                  icon: '/favicon.ico',
-                  silent: true
-                });
-              } catch {}
+            // Dispatch silent browser desktop notification if permission granted (not on first load)
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              for (const t of newToasts) {
+                try {
+                  new Notification(t.senderName, {
+                    body: t.text,
+                    icon: '/favicon.ico',
+                    silent: true
+                  });
+                } catch {}
+              }
             }
           }
         }

@@ -222,6 +222,37 @@ export function isMessageRead(m: Message, receipts?: Record<string, boolean>): b
   return Boolean(map && map[m.id]);
 }
 
+// Global deleted message tracking (guarantees deleted messages stay deleted and active messages never disappear)
+let memoryDeletedIds = new Set<string>();
+
+export async function getDeletedMessageIds(): Promise<Set<string>> {
+  if (KV_URL && KV_TOKEN) {
+    try {
+      const res = await executeKvCommand(['GET', 'chatpass_deleted_ids']);
+      if (res) {
+        let parsed = typeof res === 'string' ? JSON.parse(res) : res;
+        if (typeof parsed === 'string') {
+          try { parsed = JSON.parse(parsed); } catch {}
+        }
+        if (Array.isArray(parsed)) {
+          parsed.forEach((id: string) => memoryDeletedIds.add(id));
+        }
+      }
+    } catch {}
+  }
+  return memoryDeletedIds;
+}
+
+export async function recordDeletedMessageIds(ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  ids.forEach(id => memoryDeletedIds.add(id));
+  if (KV_URL && KV_TOKEN) {
+    try {
+      await executeKvCommand(['SET', 'chatpass_deleted_ids', JSON.stringify(Array.from(memoryDeletedIds))]);
+    } catch {}
+  }
+}
+
 // Separate KV key for reactions — completely independent from message list operations
 async function getKvReactions(): Promise<Record<string, { emoji: string; userId: string }[]>> {
   if (!KV_URL || !KV_TOKEN) return {};
@@ -332,6 +363,7 @@ export async function getDb(): Promise<DatabaseSchema> {
   // Merge messages: combine candidate sources without dropping any message
   const allRawMessages: Message[] = [];
   const seenIds = new Set<string>();
+  const deleted = await getDeletedMessageIds().catch(() => new Set<string>());
 
   const candidateLists = [
     Array.isArray(cloudMessages) ? cloudMessages : [],
@@ -341,7 +373,7 @@ export async function getDb(): Promise<DatabaseSchema> {
 
   for (const list of candidateLists) {
     for (const m of list) {
-      if (m && m.id && !seenIds.has(m.id)) {
+      if (m && m.id && !seenIds.has(m.id) && !deleted.has(m.id)) {
         seenIds.add(m.id);
         allRawMessages.push(m);
       }
@@ -371,7 +403,49 @@ export async function getDb(): Promise<DatabaseSchema> {
   return result;
 }
 
+// Atomically save users ONLY without touching or overwriting messages (prevents heartbeat race conditions)
+export async function saveUsers(users: User[]): Promise<void> {
+  if (memoryStore) {
+    memoryStore.users = users;
+  }
+
+  if (KV_URL && KV_TOKEN) {
+    await saveKvUsers(users).catch(() => false);
+  }
+
+  const filePath = getDbFilePath();
+  try {
+    let currentData: DatabaseSchema | null = null;
+    if (fs.existsSync(filePath)) {
+      try {
+        const fileData = fs.readFileSync(filePath, 'utf-8');
+        currentData = JSON.parse(fileData);
+      } catch {}
+    }
+    if (!currentData) {
+      currentData = { adminCode: INITIAL_DATA.adminCode, users, messages: [] };
+    } else {
+      currentData.users = users;
+    }
+    fs.writeFileSync(filePath, JSON.stringify(currentData, null, 2), 'utf-8');
+  } catch (error) {
+    console.warn('Could not write users to disk:', error);
+  }
+}
+
 export async function saveDb(data: DatabaseSchema): Promise<void> {
+  const deleted = await getDeletedMessageIds().catch(() => new Set<string>());
+
+  // Merge messages: ensure no active message is dropped
+  if (memoryStore && Array.isArray(memoryStore.messages)) {
+    const seen = new Set(data.messages.map(m => m.id));
+    for (const m of memoryStore.messages) {
+      if (m && m.id && !seen.has(m.id) && !deleted.has(m.id)) {
+        data.messages.push(m);
+        seen.add(m.id);
+      }
+    }
+  }
   memoryStore = data;
 
   if (KV_URL && KV_TOKEN) {
@@ -380,6 +454,21 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
 
   const filePath = getDbFilePath();
   try {
+    if (fs.existsSync(filePath)) {
+      try {
+        const fileData = fs.readFileSync(filePath, 'utf-8');
+        const diskData = JSON.parse(fileData);
+        if (diskData && Array.isArray(diskData.messages)) {
+          const seen = new Set(data.messages.map(m => m.id));
+          for (const m of diskData.messages) {
+            if (m && m.id && !seen.has(m.id) && !deleted.has(m.id)) {
+              data.messages.push(m);
+              seen.add(m.id);
+            }
+          }
+        }
+      } catch {}
+    }
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
   } catch (error) {
     console.warn('Could not write DB file to disk:', error);
@@ -528,7 +617,8 @@ export async function updateUser(id: string, updates: Partial<User>): Promise<Us
     if (index === -1) return null;
 
     db.users[index] = { ...db.users[index], ...updates };
-    await saveDb(db).catch(() => {});
+    // Save only users so periodic heartbeats never touch or overwrite messages
+    await saveUsers(db.users).catch(() => {});
     return db.users[index];
   } catch (err) {
     console.warn('updateUser warning:', err);
@@ -547,8 +637,24 @@ export async function deleteUser(id: string): Promise<boolean> {
 
 // ATOMIC MESSAGE HELPERS
 export async function getConversationMessages(user1Id: string, user2Id: string, viewerId?: string): Promise<Message[]> {
-  const allMessages = (KV_URL && KV_TOKEN) ? (await getKvMessages()) || [] : (await getDb()).messages;
+  let allMessages: Message[] = [];
+  if (KV_URL && KV_TOKEN) {
+    const kvMsgs = await getKvMessages().catch(() => null);
+    if (Array.isArray(kvMsgs) && kvMsgs.length > 0) {
+      allMessages = kvMsgs;
+    } else {
+      // Fallback to getDb so we never return an empty array due to transient KV latency or failure
+      const db = await getDb();
+      allMessages = db.messages;
+    }
+  } else {
+    const db = await getDb();
+    allMessages = db.messages;
+  }
+
+  const deleted = await getDeletedMessageIds().catch(() => new Set<string>());
   let msgs = allMessages
+    .filter(m => !deleted.has(m.id))
     .filter(m => (m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id))
     .sort((a, b) => {
       const tA = new Date(a.createdAt).getTime();
@@ -563,7 +669,7 @@ export async function getConversationMessages(user1Id: string, user2Id: string, 
 
   // Auto-clean/decrypt any legacy encrypted messages
   try {
-    const { decryptText } = await import('@/lib/crypto');
+    const { decryptText } = await import('./crypto');
     msgs = await Promise.all(
       msgs.map(async (m) => {
         if (m.text && m.text.startsWith('ENC:')) {
@@ -681,23 +787,16 @@ export async function markMessagesAsRead(senderId: string, receiverId: string): 
       }
     });
   }
-
-  if (!KV_URL || !KV_TOKEN) {
-    let updated = false;
-    db.messages.forEach(m => {
-      if (m.senderId === senderId && m.receiverId === receiverId && !m.read) {
-        m.read = true;
-        updated = true;
-      }
-    });
-    if (updated) {
-      await saveDb(db).catch(() => {});
-    }
-  }
 }
 
 export async function clearConversationMessages(user1Id: string, user2Id: string): Promise<boolean> {
   const db = await getDb();
+  const targetMsgs = db.messages.filter(
+    m => (m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id)
+  );
+  const targetIds = targetMsgs.map(m => m.id);
+  await recordDeletedMessageIds(targetIds);
+
   db.messages = db.messages.filter(
     m => !((m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id))
   );
@@ -711,11 +810,27 @@ export async function clearConversationMessages(user1Id: string, user2Id: string
   if (KV_URL && KV_TOKEN) {
     await saveKvMessages(db.messages).catch(() => false);
   }
-  await saveDb(db).catch(() => {});
+
+  const filePath = getDbFilePath();
+  try {
+    if (fs.existsSync(filePath)) {
+      const fileData = fs.readFileSync(filePath, 'utf-8');
+      const diskData = JSON.parse(fileData);
+      if (diskData && Array.isArray(diskData.messages)) {
+        diskData.messages = diskData.messages.filter(
+          (m: any) => !((m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id))
+        );
+        fs.writeFileSync(filePath, JSON.stringify(diskData, null, 2), 'utf-8');
+      }
+    }
+  } catch {}
+
   return true;
 }
 
 export async function deleteMessage(messageId: string): Promise<boolean> {
+  await recordDeletedMessageIds([messageId]);
+
   const db = await getDb();
   const prevLen = db.messages.length;
   db.messages = db.messages.filter(m => m.id !== messageId);
@@ -734,7 +849,19 @@ export async function deleteMessage(messageId: string): Promise<boolean> {
       }
     } catch {}
   }
-  await saveDb(db).catch(() => {});
+
+  const filePath = getDbFilePath();
+  try {
+    if (fs.existsSync(filePath)) {
+      const fileData = fs.readFileSync(filePath, 'utf-8');
+      const diskData = JSON.parse(fileData);
+      if (diskData && Array.isArray(diskData.messages)) {
+        diskData.messages = diskData.messages.filter((m: any) => m.id !== messageId);
+        fs.writeFileSync(filePath, JSON.stringify(diskData, null, 2), 'utf-8');
+      }
+    }
+  } catch {}
+
   return db.messages.length < prevLen;
 }
 
@@ -766,7 +893,24 @@ export async function deleteMessageForMe(messageId: string, userId: string): Pro
   if (KV_URL && KV_TOKEN) {
     await saveKvMessages(db.messages).catch(() => false);
   }
-  await saveDb(db).catch(() => {});
+
+  const filePath = getDbFilePath();
+  try {
+    if (fs.existsSync(filePath)) {
+      const fileData = fs.readFileSync(filePath, 'utf-8');
+      const diskData = JSON.parse(fileData);
+      if (diskData && Array.isArray(diskData.messages)) {
+        diskData.messages.forEach((m: any) => {
+          if (m.id === messageId) {
+            if (!m.deletedFor) m.deletedFor = [];
+            if (!m.deletedFor.includes(userId)) m.deletedFor.push(userId);
+          }
+        });
+        fs.writeFileSync(filePath, JSON.stringify(diskData, null, 2), 'utf-8');
+      }
+    }
+  } catch {}
+
   return found;
 }
 
