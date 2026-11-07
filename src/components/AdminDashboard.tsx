@@ -128,9 +128,23 @@ export default function AdminDashboard({ onClose, onSelectUserForChat, onSwitchU
   };
 
   const handleDeleteUser = async (userId: string) => {
+    if (userId === 'admin_root') {
+      alert('Cannot delete the root administrator account.');
+      return;
+    }
+    const adminCount = users.filter(u => u.role === 'admin').length;
+    const target = users.find(u => u.id === userId);
+    if (target?.role === 'admin' && adminCount <= 1) {
+      alert('Cannot delete the last remaining administrator account.');
+      return;
+    }
     if (!confirm('Are you sure you want to delete this user account and their chat history?')) return;
     try {
-      await fetch(`/api/admin/users?id=${userId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/admin/users?id=${userId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert(data.error || 'Failed to delete user');
+      }
       fetchUsers();
     } catch {
       // Ignored
@@ -179,7 +193,7 @@ export default function AdminDashboard({ onClose, onSelectUserForChat, onSwitchU
   const getDirectLink = (userCode: string) => {
     if (typeof window === 'undefined') return '';
     const origin = window.location.origin;
-    return `${origin}/?code=${encodeURIComponent(userCode)}`;
+    return `${origin}/#code=${encodeURIComponent(userCode)}`;
   };
 
   const copyToClipboard = (text: string, type: 'link' | 'code') => {

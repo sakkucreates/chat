@@ -33,7 +33,7 @@ interface ChatWindowProps {
   currentUser: User;
   contact: User;
   messages: Message[];
-  onSendMessage: (text: string, image?: string, video?: string, audio?: string) => Promise<void>;
+  onSendMessage: (text: string, image?: string, video?: string, audio?: string, replyTo?: { id: string; text: string; senderName: string }) => Promise<void>;
   onDeleteMessage?: (messageId: string, mode: 'everyone' | 'me') => void;
   onClearChat?: () => Promise<void>;
   onTyping?: (isTyping: boolean) => void;
@@ -154,12 +154,30 @@ export default function ChatWindow({
     }
   };
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  const prevMsgCountRef = useRef<number>(0);
+  const prevLastMsgIdRef = useRef<string | null>(null);
 
+  // Opening or switching contacts: instant scroll with 50ms layout settle
   useEffect(() => {
-    scrollToBottom();
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    const timer = setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [contact.id]);
+
+  // Polling / incoming messages: smooth scroll only on brand-new message
+  useEffect(() => {
+    const currentCount = messages.length;
+    const lastMsg = messages[messages.length - 1];
+    const lastMsgId = lastMsg?.id || null;
+
+    if (currentCount > prevMsgCountRef.current || (lastMsgId && lastMsgId !== prevLastMsgIdRef.current)) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    prevMsgCountRef.current = currentCount;
+    prevLastMsgIdRef.current = lastMsgId;
   }, [messages]);
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -174,6 +192,42 @@ export default function ChatWindow({
     }
   };
 
+  const compressImage = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = () => {
+          const MAX_DIM = 1280;
+          let { width, height } = img;
+          if (width > MAX_DIM || height > MAX_DIM) {
+            if (width > height) {
+              height = Math.round((height * MAX_DIM) / width);
+              width = MAX_DIM;
+            } else {
+              width = Math.round((width * MAX_DIM) / height);
+              height = MAX_DIM;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(e.target?.result as string);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        };
+        img.src = e.target?.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!text.trim() && !selectedImage && !selectedVideo) return;
@@ -184,6 +238,11 @@ export default function ChatWindow({
     const msgText = text;
     const msgImg = selectedImage;
     const msgVid = selectedVideo;
+    const msgReplyTo = replyingTo ? {
+      id: replyingTo.id,
+      text: replyingTo.text || (replyingTo.image ? '📷 Photo' : replyingTo.video ? '📹 Video' : replyingTo.audio ? '🎙️ Voice note' : 'Message'),
+      senderName: replyingTo.senderId === currentUser.id ? 'You' : contact.name
+    } : undefined;
 
     setText('');
     setSelectedImage(null);
@@ -192,7 +251,7 @@ export default function ChatWindow({
     setShowEmojiPicker(false);
 
     try {
-      await onSendMessage(msgText, msgImg || undefined, msgVid || undefined);
+      await onSendMessage(msgText, msgImg || undefined, msgVid || undefined, undefined, msgReplyTo);
     } catch (err) {
       console.error('Failed to send message:', err);
     }
@@ -274,7 +333,7 @@ export default function ChatWindow({
     }
   };
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -283,11 +342,16 @@ export default function ChatWindow({
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setSelectedImage(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressed = await compressImage(file);
+      setSelectedImage(compressed);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setSelectedImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleVideoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -559,6 +623,24 @@ export default function ChatWindow({
                         : 'bg-[#202c33] text-slate-100 rounded-tl-none border border-[#2a3942] shadow-md'
                     }`}
                   >
+                    {/* Quoted Reply Preview */}
+                    {msg.replyTo && (
+                      <div
+                        className={`mb-2 p-2 rounded-lg text-xs border-l-4 ${
+                          isLight
+                            ? 'bg-black/5 border-[#00a884] text-slate-700'
+                            : 'bg-black/25 border-[#00a884] text-slate-300'
+                        }`}
+                      >
+                        <div className="font-semibold text-[11px] text-[#00a884]">
+                          {msg.replyTo.senderName}
+                        </div>
+                        <div className="truncate text-[11px] opacity-80">
+                          {msg.replyTo.text}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Image Attachment */}
                     {msg.image && (
                       <div className="mb-2 overflow-hidden rounded-lg bg-black/10 border border-black/10 dark:border-white/10">

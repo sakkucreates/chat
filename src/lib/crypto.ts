@@ -1,7 +1,10 @@
-// End-to-End Encryption utility using Web Crypto API (AES-GCM 256-bit)
+// End-to-End Encryption utility using Web Crypto API (AES-GCM 256-bit + PBKDF2 100,000 iterations)
 // Works in all modern browsers and Node.js environments
 
 function getSubtleCrypto(): SubtleCrypto | null {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto?.subtle) {
+    return globalThis.crypto.subtle;
+  }
   if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
     return window.crypto.subtle;
   }
@@ -39,35 +42,71 @@ function base64ToUint8Array(base64: string): Uint8Array {
   return bytes;
 }
 
-// Cache derived CryptoKeys in memory for instant operations
-const keyCache = new Map<string, CryptoKey>();
+// Fixed salt for E2EE key derivation
+const PBKDF2_SALT = new TextEncoder().encode('lumachat_e2ee_pbkdf2_master_salt_2026');
 
-async function getConversationKey(user1Id: string, user2Id: string): Promise<CryptoKey | null> {
+// CRITICAL ANTI-FREEZE CACHE:
+// Cache the in-flight Promise<CryptoKey> in memory rather than just the resolved key.
+// When 100+ messages decrypt concurrently on load, all messages reuse the single in-flight Promise,
+// preventing 100 parallel 100,000-iteration PBKDF2 computations from locking mobile browser CPUs.
+const conversationKeyPromiseCache = new Map<string, Promise<CryptoKey | null>>();
+
+export async function getConversationKey(user1Id: string, user2Id: string, method: 'pbkdf2' | 'sha256' = 'pbkdf2'): Promise<CryptoKey | null> {
   const subtle = getSubtleCrypto();
   if (!subtle) return null;
 
-  const pairKey = [user1Id, user2Id].sort().join(':');
-  if (keyCache.has(pairKey)) {
-    return keyCache.get(pairKey)!;
+  const pairKey = `${[user1Id, user2Id].sort().join(':')}_${method}`;
+  if (conversationKeyPromiseCache.has(pairKey)) {
+    return conversationKeyPromiseCache.get(pairKey)!;
   }
 
-  try {
-    const encoder = new TextEncoder();
-    const seed = `chatpass_e2ee_${pairKey}_v1_master_salt`;
-    const hash = await subtle.digest('SHA-256', encoder.encode(seed));
-    const key = await subtle.importKey(
-      'raw',
-      hash,
-      { name: 'AES-GCM' },
-      false,
-      ['encrypt', 'decrypt']
-    );
-    keyCache.set(pairKey, key);
-    return key;
-  } catch (err) {
-    console.warn('Error deriving crypto key:', err);
-    return null;
-  }
+  const derivationPromise = (async (): Promise<CryptoKey | null> => {
+    try {
+      const encoder = new TextEncoder();
+      const rawSeed = `lumachat_e2ee_${[user1Id, user2Id].sort().join(':')}_key_material`;
+
+      if (method === 'pbkdf2') {
+        // PBKDF2 with 100,000 iterations of SHA-256
+        const baseKey = await subtle.importKey(
+          'raw',
+          encoder.encode(rawSeed),
+          'PBKDF2',
+          false,
+          ['deriveKey']
+        );
+
+        const key = await subtle.deriveKey(
+          {
+            name: 'PBKDF2',
+            salt: PBKDF2_SALT as unknown as BufferSource,
+            iterations: 100000,
+            hash: 'SHA-256'
+          },
+          baseKey,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['encrypt', 'decrypt']
+        );
+        return key;
+      } else {
+        // Fast SHA-256 legacy fallback for backward compatibility
+        const hash = await subtle.digest('SHA-256', encoder.encode(`chatpass_e2ee_${[user1Id, user2Id].sort().join(':')}_v1_master_salt`));
+        return await subtle.importKey(
+          'raw',
+          hash,
+          { name: 'AES-GCM' },
+          false,
+          ['encrypt', 'decrypt']
+        );
+      }
+    } catch (err) {
+      console.warn('Error deriving conversation key:', err);
+      return null;
+    }
+  })();
+
+  conversationKeyPromiseCache.set(pairKey, derivationPromise);
+  return derivationPromise;
 }
 
 export function isEncrypted(text: string): boolean {
@@ -81,13 +120,23 @@ export async function encryptText(plainText: string, user1Id: string, user2Id: s
   if (!subtle) return plainText;
 
   try {
-    const key = await getConversationKey(user1Id, user2Id);
+    const key = await getConversationKey(user1Id, user2Id, 'pbkdf2');
     if (!key) return plainText;
 
-    const iv = typeof window !== 'undefined' && window.crypto
+    const iv = (typeof globalThis !== 'undefined' && globalThis.crypto?.getRandomValues)
+      ? globalThis.crypto.getRandomValues(new Uint8Array(12))
+      : (typeof window !== 'undefined' && window.crypto)
       ? window.crypto.getRandomValues(new Uint8Array(12))
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      : new Uint8Array(require('crypto').randomBytes(12));
+      : (() => {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            return new Uint8Array(require('crypto').randomBytes(12));
+          } catch {
+            const b = new Uint8Array(12);
+            for (let i = 0; i < 12; i++) b[i] = Math.floor(Math.random() * 256);
+            return b;
+          }
+        })();
 
     const ivBuf = iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as unknown as BufferSource;
 
@@ -132,31 +181,34 @@ export async function decryptText(cipherText: string, user1Id?: string, user2Id?
     candidates.push(['admin_root', user2Id]);
   }
 
+  const methods: ('pbkdf2' | 'sha256')[] = ['pbkdf2', 'sha256'];
+
   for (const [u1, u2] of candidates) {
-    try {
-      const key = await getConversationKey(u1, u2);
-      if (!key) continue;
+    for (const method of methods) {
+      try {
+        const key = await getConversationKey(u1, u2, method);
+        if (!key) continue;
 
-      const iv = base64ToUint8Array(parts[1]);
-      const encryptedData = base64ToUint8Array(parts[2]);
+        const iv = base64ToUint8Array(parts[1]);
+        const encryptedData = base64ToUint8Array(parts[2]);
 
-      const ivBuf = iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as unknown as BufferSource;
-      const dataBuf = encryptedData.buffer.slice(encryptedData.byteOffset, encryptedData.byteOffset + encryptedData.byteLength) as unknown as BufferSource;
+        const ivBuf = iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as unknown as BufferSource;
+        const dataBuf = encryptedData.buffer.slice(encryptedData.byteOffset, encryptedData.byteOffset + encryptedData.byteLength) as unknown as BufferSource;
 
-      const decrypted = await subtle.decrypt(
-        { name: 'AES-GCM', iv: ivBuf },
-        key,
-        dataBuf
-      );
+        const decrypted = await subtle.decrypt(
+          { name: 'AES-GCM', iv: ivBuf },
+          key,
+          dataBuf
+        );
 
-      const decoder = new TextDecoder();
-      const result = decoder.decode(decrypted);
-      if (result) return result;
-    } catch {
-      // try next key candidate
+        const decoder = new TextDecoder();
+        const result = decoder.decode(decrypted);
+        if (result) return result;
+      } catch {
+        // try next candidate/method
+      }
     }
   }
 
-  // If legacy decryption cannot resolve ciphertext, return clean empty string instead of raw hash
   return '';
 }

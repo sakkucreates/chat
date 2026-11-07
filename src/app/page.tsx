@@ -148,7 +148,7 @@ export default function HomePage() {
     }
   }, []);
 
-  // Helper function to safely merge & deduplicate messages by ID
+  // Helper function to safely merge & deduplicate messages by ID and idempotencyKey
   const mergeMessages = useCallback((existingMsgs: Message[], incomingMsgs: Message[]): Message[] => {
     const map = new Map<string, Message>();
 
@@ -159,10 +159,15 @@ export default function HomePage() {
       }
     });
 
+    const confirmedIdempKeys = new Set(incomingMsgs.map((m) => m.idempotencyKey).filter(Boolean));
+
     // Keep pending optimistic temporary messages that have not yet been confirmed by server
     existingMsgs.forEach((m) => {
       if (!m || !m.id) return;
       if (m.id.startsWith('temp_')) {
+        if (m.idempotencyKey && confirmedIdempKeys.has(m.idempotencyKey)) {
+          return; // Already confirmed by server with same idempotency key
+        }
         const alreadyConfirmed = incomingMsgs.some(
           (inc) =>
             inc.senderId === m.senderId &&
@@ -265,13 +270,16 @@ export default function HomePage() {
         body: JSON.stringify({ userId: currentUser.id, status: 'offline' })
       }).catch(() => {});
     }
+    fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     sessionStorage.removeItem('chatpass_user_code');
     sessionStorage.removeItem('chatpass_disguise');
+    sessionStorage.removeItem('chatpass_link_unlocked');
     localStorage.removeItem('chatpass_user_code');
     isInitialLoadRef.current = true;
     knownMessageIdsRef.current.clear();
     setIncomingNotifications([]);
     setCurrentUser(null);
+    setIsLinkUnlocked(false);
     setActiveContactId(null);
     setMessages([]);
     setMobileView('contacts');
@@ -310,35 +318,56 @@ export default function HomePage() {
       localStorage.removeItem('chatpass_user_code');
     }
 
-    const params = new URLSearchParams(window.location.search);
-    const codeFromUrl = params.get('code');
+    // Extract passcode from URL hash fragment (#code=... or #1234) or fallback searchParams (?code=...)
+    let codeFromUrl: string | null = null;
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash.replace(/^#/, '');
+      if (hash) {
+        if (hash.startsWith('code=')) {
+          codeFromUrl = decodeURIComponent(hash.substring(5));
+        } else if (/^\d{4,8}$/.test(hash)) {
+          codeFromUrl = hash;
+        }
+      }
+      if (!codeFromUrl) {
+        const params = new URLSearchParams(window.location.search);
+        codeFromUrl = params.get('code');
+      }
 
-    // Only auto-verify if an explicit code was passed in the URL query (?code=...)
+      // Crucial security rule: immediately purge code from address bar to protect against shoulder surfing & history leaks
+      if (window.location.hash || window.location.search) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+
     if (codeFromUrl && !disguise) {
-      fetch('/api/auth/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: codeFromUrl }),
-        cache: 'no-store'
-      })
+      handleLogin(codeFromUrl).then(() => {
+        if (!ignore) setInitialChecking(false);
+      });
+    } else if (!disguise) {
+      // Check active secure HttpOnly session token cookie
+      fetch('/api/auth/session', { cache: 'no-store' })
         .then((res) => res.json())
         .then((data) => {
           if (!ignore) {
-            if (data.success && data.user) {
+            if (data.authenticated && data.user) {
               setIsLinkUnlocked(true);
               setCurrentUser(data.user);
-              if (typeof window !== 'undefined') {
-                window.history.replaceState({}, document.title, window.location.pathname);
-              }
+            } else {
+              setCurrentUser(null);
+              setIsLinkUnlocked(false);
             }
             setInitialChecking(false);
           }
         })
         .catch(() => {
-          if (!ignore) setInitialChecking(false);
+          if (!ignore) {
+            setCurrentUser(null);
+            setIsLinkUnlocked(false);
+            setInitialChecking(false);
+          }
         });
     } else {
-      // Whenever someone opens the link or refreshes the page, direct straight to login logic
       setCurrentUser(null);
       setIsLinkUnlocked(false);
       setInitialChecking(false);
@@ -373,7 +402,30 @@ export default function HomePage() {
       const res = await fetch(url, { cache: 'no-store' });
       const data = await res.json();
       if (data.users && Array.isArray(data.users)) {
-        setUsers(data.users);
+        const usersWithDecryptedLastMsg = await Promise.all(
+          data.users.map(async (u: User & { unreadCount?: number; lastMessage?: Message | null }) => {
+            if (u.lastMessage?.text && isEncrypted(u.lastMessage.text)) {
+              try {
+                const plain = await decryptText(
+                  u.lastMessage.text,
+                  u.lastMessage.senderId || currentUser.id,
+                  u.lastMessage.receiverId || u.id
+                );
+                return {
+                  ...u,
+                  lastMessage: {
+                    ...u.lastMessage,
+                    text: plain || ''
+                  }
+                };
+              } catch {
+                return u;
+              }
+            }
+            return u;
+          })
+        );
+        setUsers(usersWithDecryptedLastMsg);
 
         const newToasts: {
           id: string;
@@ -385,7 +437,7 @@ export default function HomePage() {
         }[] = [];
         let totalUnread = 0;
 
-        for (const u of data.users) {
+        for (const u of usersWithDecryptedLastMsg) {
           totalUnread += u.unreadCount || 0;
           // Collect all unread messages for this user to trigger a toast for each one
           const candidateMsgs: Message[] = (u.unreadMessages && Array.isArray(u.unreadMessages) && u.unreadMessages.length > 0)
@@ -395,11 +447,19 @@ export default function HomePage() {
           for (const m of candidateMsgs) {
             if (!knownMessageIdsRef.current.has(m.id)) {
               knownMessageIdsRef.current.add(m.id);
+              let toastText = m.text;
+              if (toastText && isEncrypted(toastText)) {
+                try {
+                  toastText = (await decryptText(toastText, m.senderId || currentUser.id, m.receiverId || u.id)) || 'New message';
+                } catch {
+                  toastText = 'New message';
+                }
+              }
               newToasts.push({
                 id: m.id,
                 senderName: u.name,
                 senderAvatar: u.avatar || '👤',
-                text: m.text || (m.image ? '📷 Sent a photo' : m.audio ? '🎙️ Voice note' : 'New message'),
+                text: toastText || (m.image ? '📷 Sent a photo' : m.audio ? '🎙️ Voice note' : 'New message'),
                 contact: u,
                 time: new Date(m.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
               });
@@ -631,13 +691,20 @@ export default function HomePage() {
     }
   };
 
-  const handleSendMessage = async (text: string, image?: string, video?: string, audio?: string) => {
+  const handleSendMessage = async (
+    text: string,
+    image?: string,
+    video?: string,
+    audio?: string,
+    replyTo?: { id: string; text: string; senderName: string }
+  ) => {
     if (!currentUser || !activeContactId) return;
 
     // Reset typing immediately when message is sent
     handleTyping(false);
 
     // Create instant optimistic message for 0ms sending experience
+    const idempotencyKey = `idemp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const tempId = `temp_msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const plainText = text ? text.trim() : '';
     const optimisticMsg: Message = {
@@ -649,7 +716,10 @@ export default function HomePage() {
       video: video || undefined,
       audio: audio || undefined,
       createdAt: new Date().toISOString(),
-      read: false
+      read: 0,
+      reactions: [],
+      idempotencyKey,
+      replyTo: replyTo || undefined
     };
 
     // Render message instantly in UI (0ms delay!)
@@ -673,17 +743,21 @@ export default function HomePage() {
     );
 
     try {
-      // Send clean plain text directly over the wire
+      // End-to-end Encrypt text payload with Web Crypto AES-GCM (PBKDF2 key derivation)
+      const ciphertext = plainText ? await encryptText(plainText, currentUser.id, activeContactId) : '';
+
       const res = await fetch('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           senderId: currentUser.id,
           receiverId: activeContactId,
-          text: plainText,
+          text: ciphertext,
           image,
           video,
-          audio
+          audio,
+          idempotencyKey,
+          replyTo
         }),
         cache: 'no-store'
       });
@@ -696,7 +770,7 @@ export default function HomePage() {
         };
         setMessages((prev) => {
           // Replace optimistic message with confirmed server message
-          const filtered = prev.filter((m) => m.id !== tempId);
+          const filtered = prev.filter((m) => m.id !== tempId && m.idempotencyKey !== idempotencyKey);
           const merged = mergeMessages(filtered, [confirmedMsg]);
           setCachedMessages(currentUser.id, activeContactId, merged);
           return merged;
@@ -827,6 +901,7 @@ export default function HomePage() {
             onSelectContact={handleSelectContact}
             onOpenAdmin={() => setShowAdminModal(true)}
             onLogout={handleLogout}
+            onPanic={handlePanic}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
             theme={theme}

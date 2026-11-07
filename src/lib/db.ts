@@ -28,8 +28,10 @@ export interface Message {
   video?: string;
   audio?: string;
   createdAt: string;
-  read: boolean;
+  read: boolean | number;
   reactions?: { emoji: string; userId: string }[];
+  idempotencyKey?: string;
+  replyTo?: { id: string; text?: string; senderName?: string } | null;
   deletedFor?: string[];
 }
 
@@ -39,7 +41,7 @@ export interface DatabaseSchema {
   adminCode: string;
 }
 
-// Seeded initial state with all project accounts
+// Seeded initial state with standard accounts
 const INITIAL_DATA: DatabaseSchema = {
   adminCode: process.env.ADMIN_CODE || 'ADMIN123',
   users: [
@@ -69,14 +71,126 @@ const INITIAL_DATA: DatabaseSchema = {
   messages: []
 };
 
-// Global memory cache for single-process fallback
+// Global memory cache
 let memoryStore: DatabaseSchema | null = null;
 
-// Environment credentials for Upstash Redis / Vercel KV REST API
+// ==========================================
+// 1. TURSO libSQL Edge SQLite HTTP Pipeline
+// ==========================================
+const TURSO_URL = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL;
+const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
+
+let tursoInitPromise: Promise<boolean> | null = null;
+
+async function executeTursoQuery(sql: string, args: (string | number | boolean | null)[] = []): Promise<any> {
+  if (!TURSO_URL || !TURSO_TOKEN) return null;
+  try {
+    let endpoint = TURSO_URL.trim();
+    if (endpoint.startsWith('libsql://')) {
+      endpoint = endpoint.replace('libsql://', 'https://');
+    } else if (!endpoint.startsWith('http://') && !endpoint.startsWith('https://')) {
+      endpoint = 'https://' + endpoint;
+    }
+    endpoint = `${endpoint.replace(/\/$/, '')}/v2/pipeline`;
+
+    const formattedArgs = args.map(arg => {
+      if (arg === null || arg === undefined) return { type: 'null' };
+      if (typeof arg === 'number') {
+        return Number.isInteger(arg) ? { type: 'integer', value: String(arg) } : { type: 'float', value: arg };
+      }
+      if (typeof arg === 'boolean') {
+        return { type: 'integer', value: arg ? '1' : '0' };
+      }
+      return { type: 'text', value: String(arg) };
+    });
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${TURSO_TOKEN.trim()}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        requests: [
+          {
+            type: 'execute',
+            stmt: {
+              sql,
+              args: formattedArgs
+            }
+          },
+          { type: 'close' }
+        ]
+      }),
+      cache: 'no-store'
+    });
+
+    if (!res.ok) {
+      console.warn(`Turso HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    const result = data?.results?.[0]?.response?.result;
+    return result || null;
+  } catch (err) {
+    console.warn('Turso query error:', err);
+    return null;
+  }
+}
+
+async function initTursoSchema(): Promise<boolean> {
+  if (!TURSO_URL || !TURSO_TOKEN) return false;
+  if (!tursoInitPromise) {
+    tursoInitPromise = (async () => {
+      try {
+        await executeTursoQuery(`
+          CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            code TEXT NOT NULL UNIQUE,
+            role TEXT NOT NULL,
+            avatar TEXT NOT NULL,
+            status TEXT NOT NULL,
+            lastSeen TEXT NOT NULL,
+            createdAt TEXT NOT NULL,
+            notes TEXT
+          );
+        `);
+        await executeTursoQuery(`
+          CREATE TABLE IF NOT EXISTS messages (
+            id TEXT PRIMARY KEY,
+            senderId TEXT NOT NULL,
+            receiverId TEXT NOT NULL,
+            text TEXT,
+            image TEXT,
+            video TEXT,
+            audio TEXT,
+            createdAt TEXT NOT NULL,
+            read INTEGER NOT NULL DEFAULT 0,
+            reactions TEXT,
+            idempotencyKey TEXT,
+            replyTo TEXT,
+            deletedFor TEXT
+          );
+        `);
+        await executeTursoQuery(`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(senderId, receiverId);`);
+        await executeTursoQuery(`CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(createdAt);`);
+        await executeTursoQuery(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);`);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+  }
+  return tursoInitPromise;
+}
+
+// ==========================================
+// 2. Upstash Redis / Vercel KV REST API
+// ==========================================
 const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
-// Upstash / Vercel KV REST Command Executor (atomic Redis operations over HTTP REST)
 async function executeKvCommand(command: (string | number)[]): Promise<any> {
   if (!KV_URL || !KV_TOKEN) return null;
   try {
@@ -93,28 +207,22 @@ async function executeKvCommand(command: (string | number)[]): Promise<any> {
       body: JSON.stringify(command),
       cache: 'no-store'
     });
-    if (!res.ok) {
-      console.warn(`Upstash KV HTTP ${res.status}`);
-      return null;
-    }
+    if (!res.ok) return null;
     const data = await res.json();
     return data ? data.result : null;
   } catch (err) {
-    console.warn('Upstash KV command error:', err);
+    console.warn('Upstash KV error:', err);
     return null;
   }
 }
 
-// Atomic Redis KV Operations
 async function getKvUsers(): Promise<User[] | null> {
   const result = await executeKvCommand(['GET', 'chatpass_users']);
   if (result) {
     try {
       let parsed = typeof result === 'string' ? JSON.parse(result) : result;
       if (typeof parsed === 'string') {
-        try {
-          parsed = JSON.parse(parsed);
-        } catch {}
+        try { parsed = JSON.parse(parsed); } catch {}
       }
       return Array.isArray(parsed) ? parsed : null;
     } catch {
@@ -129,7 +237,6 @@ async function saveKvUsers(users: User[]): Promise<boolean> {
   return res !== null;
 }
 
-// ATOMIC Redis List Read via LRANGE (reads all stored messages atomically with deduplication by unique ID)
 async function getKvMessages(): Promise<Message[] | null> {
   const result = await executeKvCommand(['LRANGE', 'chatpass_messages', '0', '-1']);
   if (Array.isArray(result)) {
@@ -148,10 +255,8 @@ async function getKvMessages(): Promise<Message[] | null> {
         })
         .filter((m: any) => m && typeof m === 'object' && m.id && m.senderId && m.receiverId);
 
-      // Deduplicate strictly by ID only (never drop messages with identical text or quick timestamps)
       const seenIds = new Set<string>();
       const uniqueMessages: Message[] = [];
-
       for (const m of parsed) {
         if (!seenIds.has(m.id)) {
           seenIds.add(m.id);
@@ -166,13 +271,27 @@ async function getKvMessages(): Promise<Message[] | null> {
   return null;
 }
 
-// ATOMIC Redis List Push via RPUSH (guarantees concurrent message append safety)
 async function pushKvMessage(message: Message): Promise<boolean> {
   const res = await executeKvCommand(['RPUSH', 'chatpass_messages', JSON.stringify(message)]);
   return res !== null;
 }
 
-// Separate KV key for read message IDs (guarantees accurate unread counts without timestamp race conditions)
+async function saveKvMessages(messages: Message[]): Promise<boolean> {
+  if (!KV_URL || !KV_TOKEN) return false;
+  try {
+    await executeKvCommand(['DEL', 'chatpass_messages']);
+    if (messages.length > 0) {
+      const stringifiedMsgs = messages.map((m) => JSON.stringify(m));
+      await executeKvCommand(['RPUSH', 'chatpass_messages', ...stringifiedMsgs]);
+    }
+    return true;
+  } catch (err) {
+    console.warn('saveKvMessages error:', err);
+    return false;
+  }
+}
+
+// Read receipts storage
 let memoryReadReceipts: Record<string, boolean> = {};
 
 export async function getKvReadReceipts(): Promise<Record<string, boolean>> {
@@ -186,7 +305,6 @@ export async function getKvReadReceipts(): Promise<Record<string, boolean>> {
       }
       if (parsed && typeof parsed === 'object') {
         const cleaned: Record<string, boolean> = { ...memoryReadReceipts };
-        // Accept boolean ID map, or ignore legacy timestamp strings
         for (const [k, v] of Object.entries(parsed)) {
           if (v === true || v === 'true' || v === 1) {
             cleaned[k] = true;
@@ -222,7 +340,40 @@ export function isMessageRead(m: Message, receipts?: Record<string, boolean>): b
   return Boolean(map && map[m.id]);
 }
 
-// Global deleted message tracking (guarantees deleted messages stay deleted and active messages never disappear)
+// Reactions in separate KV store
+async function getKvReactions(): Promise<Record<string, { emoji: string; userId: string }[]>> {
+  if (!KV_URL || !KV_TOKEN) return {};
+  try {
+    const result = await executeKvCommand(['GET', 'chatpass_reactions']);
+    if (result) {
+      const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    }
+  } catch {}
+  return {};
+}
+
+async function saveKvReaction(
+  messageId: string,
+  reactions: { emoji: string; userId: string }[]
+): Promise<boolean> {
+  if (!KV_URL || !KV_TOKEN) return false;
+  try {
+    const current = await getKvReactions();
+    if (reactions.length === 0) {
+      delete current[messageId];
+    } else {
+      current[messageId] = reactions;
+    }
+    const res = await executeKvCommand(['SET', 'chatpass_reactions', JSON.stringify(current)]);
+    return res !== null;
+  } catch (err) {
+    console.warn('saveKvReaction error:', err);
+    return false;
+  }
+}
+
+// Deleted Message ID registry
 let memoryDeletedIds = new Set<string>();
 
 export async function getDeletedMessageIds(): Promise<Set<string>> {
@@ -253,59 +404,81 @@ export async function recordDeletedMessageIds(ids: string[]): Promise<void> {
   }
 }
 
-// Separate KV key for reactions — completely independent from message list operations
-async function getKvReactions(): Promise<Record<string, { emoji: string; userId: string }[]>> {
-  if (!KV_URL || !KV_TOKEN) return {};
-  try {
-    const result = await executeKvCommand(['GET', 'chatpass_reactions']);
-    if (result) {
-      const parsed = typeof result === 'string' ? JSON.parse(result) : result;
-      return parsed && typeof parsed === 'object' ? parsed : {};
-    }
-  } catch {
-    // ignore
-  }
-  return {};
-}
-
-async function saveKvReaction(
-  messageId: string,
-  reactions: { emoji: string; userId: string }[]
-): Promise<boolean> {
-  if (!KV_URL || !KV_TOKEN) return false;
-  try {
-    // Read current reactions map, update just this message's reactions, write back
-    const current = await getKvReactions();
-    if (reactions.length === 0) {
-      delete current[messageId];
-    } else {
-      current[messageId] = reactions;
-    }
-    const res = await executeKvCommand(['SET', 'chatpass_reactions', JSON.stringify(current)]);
-    return res !== null;
-  } catch (err) {
-    console.warn('saveKvReaction error:', err);
-    return false;
-  }
-}
-
-// Determine DB File path for local disk fallback
+// ==========================================
+// 3. Local Disk Fallback Engine
+// ==========================================
 function getDbFilePath(): string {
   if (process.env.VERCEL) {
-    return path.join('/tmp', 'chat_db.json');
+    return path.join('/tmp', 'lumachat_db.json');
   }
   const dataDir = path.join(process.cwd(), 'data');
   if (!fs.existsSync(dataDir)) {
     try {
       fs.mkdirSync(dataDir, { recursive: true });
     } catch {
-      return path.join('/tmp', 'chat_db.json');
+      return path.join('/tmp', 'lumachat_db.json');
     }
   }
   return path.join(dataDir, 'db.json');
 }
 
 export async function getDb(): Promise<DatabaseSchema> {
+  // If Turso is configured, retrieve users and messages from Turso edge SQLite
+  if (TURSO_URL && TURSO_TOKEN) {
+    try {
+      await initTursoSchema();
+      const usersResult = await executeTursoQuery('SELECT * FROM users');
+      const messagesResult = await executeTursoQuery('SELECT * FROM messages ORDER BY createdAt ASC');
+
+      if (usersResult && Array.isArray(usersResult.rows)) {
+        const users: User[] = usersResult.rows.map((row: any) => {
+          const u: any = {};
+          usersResult.cols.forEach((col: any, idx: number) => {
+            u[col.name] = row[idx]?.value !== undefined ? row[idx].value : row[idx];
+          });
+          return u as User;
+        });
+
+        const messages: Message[] = (messagesResult?.rows || []).map((row: any) => {
+          const m: any = {};
+          messagesResult.cols.forEach((col: any, idx: number) => {
+            const val = row[idx]?.value !== undefined ? row[idx].value : row[idx];
+            m[col.name] = val;
+          });
+          m.read = Boolean(m.read === 1 || m.read === true);
+          if (m.reactions && typeof m.reactions === 'string') {
+            try { m.reactions = JSON.parse(m.reactions); } catch { m.reactions = []; }
+          }
+          if (m.replyTo && typeof m.replyTo === 'string') {
+            try { m.replyTo = JSON.parse(m.replyTo); } catch { m.replyTo = null; }
+          }
+          if (m.deletedFor && typeof m.deletedFor === 'string') {
+            try { m.deletedFor = JSON.parse(m.deletedFor); } catch { m.deletedFor = []; }
+          }
+          return m as Message;
+        });
+
+        // Ensure default seeded accounts exist in Turso
+        for (const seeded of INITIAL_DATA.users) {
+          if (!users.some(u => u.id === seeded.id)) {
+            await executeTursoQuery(
+              'INSERT INTO users (id, name, code, role, avatar, status, lastSeen, createdAt, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [seeded.id, seeded.name, seeded.code, seeded.role, seeded.avatar, seeded.status, seeded.lastSeen, seeded.createdAt, seeded.notes || '']
+            );
+            users.push(seeded);
+          }
+        }
+
+        const tursoDb = { adminCode: INITIAL_DATA.adminCode, users, messages };
+        memoryStore = tursoDb;
+        return tursoDb;
+      }
+    } catch (tursoErr) {
+      console.warn('Turso getDb fallback:', tursoErr);
+    }
+  }
+
+  // Fallback to Upstash KV or Local disk
   let cloudMessages: Message[] | null = null;
   let cloudUsers: User[] | null = null;
 
@@ -335,14 +508,7 @@ export async function getDb(): Promise<DatabaseSchema> {
     ? [...diskData.users]
     : [...INITIAL_DATA.users];
 
-  // Filter out deleted Sakku / Saaku account
-  users = users.filter(u => 
-    u.id !== 'usr_sakku' && 
-    u.name?.trim().toLowerCase() !== 'sakku' && 
-    u.name?.trim().toLowerCase() !== 'saaku'
-  );
-
-  // Auto-merge seeded accounts if missing so all project accounts are always displayed
+  // Auto-merge seeded accounts if missing
   let usersNeedSave = false;
   for (const seeded of INITIAL_DATA.users) {
     const exists = users.some(u => 
@@ -403,10 +569,22 @@ export async function getDb(): Promise<DatabaseSchema> {
   return result;
 }
 
-// Atomically save users ONLY without touching or overwriting messages (prevents heartbeat race conditions)
+// Save users exclusively (prevents heartbeats from overwriting messages)
 export async function saveUsers(users: User[]): Promise<void> {
   if (memoryStore) {
     memoryStore.users = users;
+  }
+
+  if (TURSO_URL && TURSO_TOKEN) {
+    try {
+      await initTursoSchema();
+      for (const u of users) {
+        await executeTursoQuery(
+          'INSERT OR REPLACE INTO users (id, name, code, role, avatar, status, lastSeen, createdAt, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [u.id, u.name, u.code, u.role, u.avatar, u.status, u.lastSeen, u.createdAt, u.notes || '']
+        );
+      }
+    } catch {}
   }
 
   if (KV_URL && KV_TOKEN) {
@@ -436,7 +614,6 @@ export async function saveUsers(users: User[]): Promise<void> {
 export async function saveDb(data: DatabaseSchema): Promise<void> {
   const deleted = await getDeletedMessageIds().catch(() => new Set<string>());
 
-  // Merge messages: ensure no active message is dropped
   if (memoryStore && Array.isArray(memoryStore.messages)) {
     const seen = new Set(data.messages.map(m => m.id));
     for (const m of memoryStore.messages) {
@@ -447,6 +624,10 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
     }
   }
   memoryStore = data;
+
+  if (TURSO_URL && TURSO_TOKEN) {
+    await saveUsers(data.users);
+  }
 
   if (KV_URL && KV_TOKEN) {
     await saveKvUsers(data.users).catch(() => false);
@@ -478,11 +659,26 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
 export async function resetDatabase(): Promise<DatabaseSchema> {
   memoryStore = JSON.parse(JSON.stringify(INITIAL_DATA));
   memoryReadReceipts = {};
+  memoryDeletedIds.clear();
+
+  if (TURSO_URL && TURSO_TOKEN) {
+    try {
+      await executeTursoQuery('DELETE FROM messages');
+      await executeTursoQuery('DELETE FROM users');
+      for (const seeded of INITIAL_DATA.users) {
+        await executeTursoQuery(
+          'INSERT INTO users (id, name, code, role, avatar, status, lastSeen, createdAt, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [seeded.id, seeded.name, seeded.code, seeded.role, seeded.avatar, seeded.status, seeded.lastSeen, seeded.createdAt, seeded.notes || '']
+        );
+      }
+    } catch {}
+  }
 
   if (KV_URL && KV_TOKEN) {
     await saveKvUsers(INITIAL_DATA.users).catch(() => false);
     await executeKvCommand(['DEL', 'chatpass_messages']).catch(() => null);
     await executeKvCommand(['DEL', 'chatpass_read_receipts']).catch(() => null);
+    await executeKvCommand(['DEL', 'chatpass_deleted_ids']).catch(() => null);
   }
 
   const filePath = getDbFilePath();
@@ -505,14 +701,12 @@ export async function findUserByCode(code: string): Promise<User | null> {
 
     const normalized = raw.replace(/^@+/, '').toUpperCase();
 
-    // 1. Try code match (with or without @ prefix, case-insensitive)
     let user = db.users.find(u => {
       if (!u || !u.code) return false;
       const uNorm = u.code.trim().replace(/^@+/, '').toUpperCase();
       return uNorm === normalized || u.code.trim().toUpperCase() === raw.toUpperCase();
     });
 
-    // 2. Fallback: try user name match (case-insensitive)
     if (!user) {
       user = db.users.find(u => {
         if (!u || !u.name) return false;
@@ -521,12 +715,10 @@ export async function findUserByCode(code: string): Promise<User | null> {
       });
     }
 
-    // 3. Fallback: check admin codes if not found yet
     if (!user && (normalized === 'ADMIN123' || normalized === 'ADMIN')) {
       user = db.users.find(u => u.role === 'admin') || db.users[0];
     }
 
-    // 4. Fallback: check 2021 login code for chat
     if (!user && (normalized === '2021')) {
       user = db.users.find(u => u.code === '2021' || u.name?.toLowerCase() === 'bita') || INITIAL_DATA.users[1];
     }
@@ -534,12 +726,7 @@ export async function findUserByCode(code: string): Promise<User | null> {
     return user || null;
   } catch (err) {
     console.error('Error in findUserByCode:', err);
-    const raw = code ? code.trim() : '';
-    const normalized = raw.replace(/^@+/, '').toUpperCase();
-    return INITIAL_DATA.users.find(u => 
-      u.code.trim().replace(/^@+/, '').toUpperCase() === normalized ||
-      u.name.trim().toUpperCase() === normalized
-    ) || (normalized === '2021' ? INITIAL_DATA.users[1] : null);
+    return null;
   }
 }
 
@@ -558,7 +745,6 @@ export async function getAllUsers(forUserId?: string): Promise<User[]> {
     const rawUsers = db.users || INITIAL_DATA.users;
     const now = Date.now();
 
-    // Dynamically calculate online/offline status based on lastSeen heartbeat (6-second threshold)
     return rawUsers.map((user) => {
       const lastSeenTime = user.lastSeen ? new Date(user.lastSeen).getTime() : 0;
       const isOnline = (now - lastSeenTime) < 6000;
@@ -606,7 +792,8 @@ export async function createUser(userData: Omit<User, 'id' | 'createdAt' | 'stat
   if (!db.users.some(u => u.id === newUser.id)) {
     db.users.push(newUser);
   }
-  await saveDb(db);
+
+  await saveUsers(db.users);
   return newUser;
 }
 
@@ -617,7 +804,6 @@ export async function updateUser(id: string, updates: Partial<User>): Promise<Us
     if (index === -1) return null;
 
     db.users[index] = { ...db.users[index], ...updates };
-    // Save only users so periodic heartbeats never touch or overwrite messages
     await saveUsers(db.users).catch(() => {});
     return db.users[index];
   } catch (err) {
@@ -627,23 +813,82 @@ export async function updateUser(id: string, updates: Partial<User>): Promise<Us
 }
 
 export async function deleteUser(id: string): Promise<boolean> {
+  // Prevent deleting root admin or last admin
   const db = await getDb();
+  const target = db.users.find(u => u.id === id);
+  if (target && (target.id === 'admin_root' || (target.role === 'admin' && db.users.filter(u => u.role === 'admin').length <= 1))) {
+    return false;
+  }
+
   const initialLength = db.users.length;
   db.users = db.users.filter(u => u.id !== id);
   db.messages = db.messages.filter(m => m.senderId !== id && m.receiverId !== id);
-  await saveDb(db);
+
+  if (TURSO_URL && TURSO_TOKEN) {
+    try {
+      await executeTursoQuery('DELETE FROM users WHERE id = ?', [id]);
+      await executeTursoQuery('DELETE FROM messages WHERE senderId = ? OR receiverId = ?', [id, id]);
+    } catch {}
+  }
+
+  await saveUsers(db.users);
   return db.users.length < initialLength;
 }
 
-// ATOMIC MESSAGE HELPERS
+// ==========================================
+// 4. ATOMIC MESSAGE HELPERS (LIMIT 150)
+// ==========================================
 export async function getConversationMessages(user1Id: string, user2Id: string, viewerId?: string): Promise<Message[]> {
+  // 1. If Turso is configured, execute subquery limit 150 in chronological order
+  if (TURSO_URL && TURSO_TOKEN) {
+    try {
+      await initTursoSchema();
+      const sql = `
+        SELECT * FROM (
+          SELECT * FROM messages 
+          WHERE (senderId = ? AND receiverId = ?) OR (senderId = ? AND receiverId = ?)
+          ORDER BY createdAt DESC LIMIT 150
+        ) ORDER BY createdAt ASC
+      `;
+      const res = await executeTursoQuery(sql, [user1Id, user2Id, user2Id, user1Id]);
+      if (res && Array.isArray(res.rows)) {
+        let msgs: Message[] = res.rows.map((row: any) => {
+          const m: any = {};
+          res.cols.forEach((col: any, idx: number) => {
+            const val = row[idx]?.value !== undefined ? row[idx].value : row[idx];
+            m[col.name] = val;
+          });
+          m.read = Boolean(m.read === 1 || m.read === true);
+          if (m.reactions && typeof m.reactions === 'string') {
+            try { m.reactions = JSON.parse(m.reactions); } catch { m.reactions = []; }
+          }
+          if (m.replyTo && typeof m.replyTo === 'string') {
+            try { m.replyTo = JSON.parse(m.replyTo); } catch { m.replyTo = null; }
+          }
+          if (m.deletedFor && typeof m.deletedFor === 'string') {
+            try { m.deletedFor = JSON.parse(m.deletedFor); } catch { m.deletedFor = []; }
+          }
+          return m as Message;
+        });
+
+        if (viewerId) {
+          msgs = msgs.filter(m => !m.deletedFor || !m.deletedFor.includes(viewerId));
+        }
+
+        return msgs;
+      }
+    } catch (tursoErr) {
+      console.warn('Turso getConversationMessages fallback:', tursoErr);
+    }
+  }
+
+  // 2. Fallback to Upstash KV or Memory/Disk
   let allMessages: Message[] = [];
   if (KV_URL && KV_TOKEN) {
     const kvMsgs = await getKvMessages().catch(() => null);
     if (Array.isArray(kvMsgs) && kvMsgs.length > 0) {
       allMessages = kvMsgs;
     } else {
-      // Fallback to getDb so we never return an empty array due to transient KV latency or failure
       const db = await getDb();
       allMessages = db.messages;
     }
@@ -682,29 +927,33 @@ export async function getConversationMessages(user1Id: string, user2Id: string, 
         return m;
       })
     );
-  } catch {
-    // If decryption module cannot run in DB worker, safely fallback
-  }
+  } catch {}
 
-  // Attach read status from atomic read receipts
+  // Attach read status
   const receipts = await getKvReadReceipts().catch(() => ({}));
   msgs = msgs.map(m => ({
     ...m,
     read: isMessageRead(m, receipts)
   }));
 
-  // Merge reactions from separate KV store (avoids race condition with message polling)
+  // Merge reactions from KV store if available
   if (KV_URL && KV_TOKEN) {
     const kvReactions = await getKvReactions().catch(() => ({} as Record<string, { emoji: string; userId: string }[]>));
-    return msgs.map(m => ({
+    msgs = msgs.map(m => ({
       ...m,
       reactions: kvReactions[m.id] || m.reactions || []
     }));
   }
+
+  // Keep query limited to latest 150 messages in chronological order
+  if (msgs.length > 150) {
+    msgs = msgs.slice(-150);
+  }
+
   return msgs;
 }
 
-// Atomic Message Creation (guarantees every message is saved without dropping consecutive messages)
+// Atomic Message Creation (with Idempotency Key & Auto Mark-as-Read on Reply)
 export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 'read'>): Promise<Message> {
   const textTrim = (msgData.text || '').trim();
   const now = Date.now();
@@ -714,17 +963,51 @@ export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 
     text: textTrim,
     id: `msg_${now}_${Math.random().toString(36).substring(2, 9)}`,
     createdAt: new Date(now).toISOString(),
-    read: false
+    read: false,
+    idempotencyKey: msgData.idempotencyKey || `idemp_${now}_${Math.random().toString(36).substring(2, 7)}`,
+    replyTo: msgData.replyTo || null,
+    reactions: []
   };
 
-  // Always append to memoryStore
+  // Rule 2.5: Sending a reply automatically marks all prior received messages as read
+  await markMessagesAsRead(msgData.receiverId, msgData.senderId).catch(() => {});
+
+  // 1. Turso libSQL edge SQLite
+  if (TURSO_URL && TURSO_TOKEN) {
+    try {
+      await initTursoSchema();
+      await executeTursoQuery(
+        `INSERT INTO messages (id, senderId, receiverId, text, image, video, audio, createdAt, read, reactions, idempotencyKey, replyTo, deletedFor)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          newMsg.id,
+          newMsg.senderId,
+          newMsg.receiverId,
+          newMsg.text,
+          newMsg.image || null,
+          newMsg.video || null,
+          newMsg.audio || null,
+          newMsg.createdAt,
+          0,
+          JSON.stringify(newMsg.reactions || []),
+          newMsg.idempotencyKey || null,
+          newMsg.replyTo ? JSON.stringify(newMsg.replyTo) : null,
+          JSON.stringify(newMsg.deletedFor || [])
+        ]
+      );
+    } catch (tursoErr) {
+      console.warn('Turso insert message error:', tursoErr);
+    }
+  }
+
+  // 2. Memory store
   if (memoryStore && Array.isArray(memoryStore.messages)) {
     if (!memoryStore.messages.some(m => m.id === newMsg.id)) {
       memoryStore.messages.push(newMsg);
     }
   }
 
-  // Always append to local disk file
+  // 3. Local disk fallback
   const filePath = getDbFilePath();
   try {
     let currentData: DatabaseSchema | null = null;
@@ -740,10 +1023,10 @@ export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 
       fs.writeFileSync(filePath, JSON.stringify(currentData, null, 2), 'utf-8');
     }
   } catch (err) {
-    console.warn('Could not write message to disk fallback:', err);
+    console.warn('Disk append error:', err);
   }
 
-  // Also push to Upstash KV Cloud Store if available
+  // 4. Upstash KV Cloud Store
   if (KV_URL && KV_TOKEN) {
     await pushKvMessage(newMsg).catch(() => false);
   }
@@ -751,24 +1034,17 @@ export async function createMessage(msgData: Omit<Message, 'id' | 'createdAt' | 
   return newMsg;
 }
 
-// Persist full message list with updated read statuses to Redis
-async function saveKvMessages(messages: Message[]): Promise<boolean> {
-  if (!KV_URL || !KV_TOKEN) return false;
-  try {
-    await executeKvCommand(['DEL', 'chatpass_messages']);
-    if (messages.length > 0) {
-      const stringifiedMsgs = messages.map((m) => JSON.stringify(m));
-      await executeKvCommand(['RPUSH', 'chatpass_messages', ...stringifiedMsgs]);
-    }
-    return true;
-  } catch (err) {
-    console.warn('saveKvMessages error:', err);
-    return false;
-  }
-}
-
-// Mark messages as read using atomic message-ID receipts (never deletes or overwrites the message list!)
+// Mark messages as read using atomic receipts
 export async function markMessagesAsRead(senderId: string, receiverId: string): Promise<void> {
+  if (TURSO_URL && TURSO_TOKEN) {
+    try {
+      await executeTursoQuery(
+        'UPDATE messages SET read = 1 WHERE senderId = ? AND receiverId = ? AND read = 0',
+        [senderId, receiverId]
+      );
+    } catch {}
+  }
+
   const db = await getDb();
   const unreadTargetMsgs = db.messages.filter(
     m => m.senderId === senderId && m.receiverId === receiverId
@@ -796,6 +1072,15 @@ export async function clearConversationMessages(user1Id: string, user2Id: string
   );
   const targetIds = targetMsgs.map(m => m.id);
   await recordDeletedMessageIds(targetIds);
+
+  if (TURSO_URL && TURSO_TOKEN) {
+    try {
+      await executeTursoQuery(
+        'DELETE FROM messages WHERE (senderId = ? AND receiverId = ?) OR (senderId = ? AND receiverId = ?)',
+        [user1Id, user2Id, user2Id, user1Id]
+      );
+    } catch {}
+  }
 
   db.messages = db.messages.filter(
     m => !((m.senderId === user1Id && m.receiverId === user2Id) || (m.senderId === user2Id && m.receiverId === user1Id))
@@ -830,6 +1115,12 @@ export async function clearConversationMessages(user1Id: string, user2Id: string
 
 export async function deleteMessage(messageId: string): Promise<boolean> {
   await recordDeletedMessageIds([messageId]);
+
+  if (TURSO_URL && TURSO_TOKEN) {
+    try {
+      await executeTursoQuery('DELETE FROM messages WHERE id = ?', [messageId]);
+    } catch {}
+  }
 
   const db = await getDb();
   const prevLen = db.messages.length;
@@ -868,6 +1159,8 @@ export async function deleteMessage(messageId: string): Promise<boolean> {
 export async function deleteMessageForMe(messageId: string, userId: string): Promise<boolean> {
   const db = await getDb();
   let found = false;
+  let updatedDeletedFor: string[] = [];
+
   db.messages.forEach(m => {
     if (m.id === messageId) {
       if (!m.deletedFor) m.deletedFor = [];
@@ -875,8 +1168,18 @@ export async function deleteMessageForMe(messageId: string, userId: string): Pro
         m.deletedFor.push(userId);
         found = true;
       }
+      updatedDeletedFor = m.deletedFor;
     }
   });
+
+  if (TURSO_URL && TURSO_TOKEN) {
+    try {
+      await executeTursoQuery(
+        'UPDATE messages SET deletedFor = ? WHERE id = ?',
+        [JSON.stringify(updatedDeletedFor), messageId]
+      );
+    } catch {}
+  }
 
   if (memoryStore && Array.isArray(memoryStore.messages)) {
     memoryStore.messages.forEach(m => {
@@ -914,34 +1217,27 @@ export async function deleteMessageForMe(messageId: string, userId: string): Pro
   return found;
 }
 
-// Add or toggle an emoji reaction on a message
-// Reactions are stored in a SEPARATE KV key to avoid race conditions with message polling
 export async function addReactionToMessage(
   messageId: string,
   userId: string,
   emoji: string
 ): Promise<Message | null> {
-  // Step 1: Get current reactions for this message from the separate reactions store
   let reactions: { emoji: string; userId: string }[] = [];
 
   if (KV_URL && KV_TOKEN) {
     const kvReactions = await getKvReactions().catch(() => ({} as Record<string, { emoji: string; userId: string }[]>));
     reactions = kvReactions[messageId] ? [...kvReactions[messageId]] : [];
   } else {
-    // Fallback: read from message in DB
     const db = await getDb();
     const msg = db.messages.find(m => m.id === messageId);
     if (!msg) return null;
     reactions = msg.reactions ? [...msg.reactions] : [];
   }
 
-  // Step 2: Toggle / update the reaction
   const existingIndex = reactions.findIndex(r => r.userId === userId && r.emoji === emoji);
   if (existingIndex !== -1) {
-    // Same emoji clicked again → remove it
     reactions.splice(existingIndex, 1);
   } else {
-    // Replace any existing reaction from same user, or add new
     const sameUserIndex = reactions.findIndex(r => r.userId === userId);
     if (sameUserIndex !== -1) {
       reactions[sameUserIndex] = { emoji, userId };
@@ -950,11 +1246,15 @@ export async function addReactionToMessage(
     }
   }
 
-  // Step 3: Save ONLY to the separate reactions KV key (no touching message list at all)
+  if (TURSO_URL && TURSO_TOKEN) {
+    try {
+      await executeTursoQuery('UPDATE messages SET reactions = ? WHERE id = ?', [JSON.stringify(reactions), messageId]);
+    } catch {}
+  }
+
   if (KV_URL && KV_TOKEN) {
     await saveKvReaction(messageId, reactions).catch(() => false);
   } else {
-    // Fallback: update message in DB directly
     const db = await getDb();
     const index = db.messages.findIndex(m => m.id === messageId);
     if (index !== -1) {
@@ -969,6 +1269,5 @@ export async function addReactionToMessage(
     }
   }
 
-  // Return a synthetic message-like object for the API response
   return { id: messageId, reactions } as unknown as Message;
 }

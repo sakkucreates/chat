@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getConversationMessages, createMessage, markMessagesAsRead } from '@/lib/db';
+import { verifyCsrf } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -34,7 +35,11 @@ export async function GET(request: Request) {
 // POST /api/messages creates a new message with server timestamp
 export async function POST(request: Request) {
   try {
-    const { senderId, receiverId, text, image, video, audio } = await request.json();
+    if (!verifyCsrf(request)) {
+      return NextResponse.json({ error: 'CSRF validation failed' }, { status: 403 });
+    }
+
+    const { senderId, receiverId, text, image, video, audio, idempotencyKey, replyTo } = await request.json();
 
     if (!senderId || !receiverId) {
       return NextResponse.json({ error: 'senderId and receiverId are required' }, { status: 400 });
@@ -50,7 +55,9 @@ export async function POST(request: Request) {
       text: text ? text.trim() : '',
       image: image || undefined,
       video: video || undefined,
-      audio: audio || undefined
+      audio: audio || undefined,
+      idempotencyKey: idempotencyKey || undefined,
+      replyTo: replyTo || undefined,
     });
 
     return NextResponse.json({ success: true, message });
@@ -63,6 +70,10 @@ export async function POST(request: Request) {
 // DELETE /api/messages deletes an individual message (either for everyone or for me)
 export async function DELETE(request: Request) {
   try {
+    if (!verifyCsrf(request)) {
+      return NextResponse.json({ error: 'CSRF validation failed' }, { status: 403 });
+    }
+
     const { searchParams } = new URL(request.url);
     let messageId = searchParams.get('messageId');
     let mode = searchParams.get('mode') || 'everyone';
