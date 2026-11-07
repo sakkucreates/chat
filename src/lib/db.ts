@@ -47,14 +47,14 @@ const INITIAL_DATA: DatabaseSchema = {
   users: [
     {
       id: 'admin_root',
-      name: 'Admin / Support',
+      name: 'Alpha',
       code: process.env.ADMIN_CODE || 'ADMIN123',
       role: 'admin',
       avatar: '🛡️',
       status: 'online',
       lastSeen: new Date().toISOString(),
       createdAt: new Date().toISOString(),
-      notes: 'System Administrator Account'
+      notes: 'Admin Account (Alpha)'
     },
     {
       id: 'usr_bita',
@@ -723,6 +723,10 @@ export async function findUserByCode(code: string): Promise<User | null> {
       user = db.users.find(u => u.code === '2021' || u.name?.toLowerCase() === 'bita') || INITIAL_DATA.users[1];
     }
 
+    if (user && user.id === 'admin_root') {
+      return { ...user, name: 'Alpha' };
+    }
+
     return user || null;
   } catch (err) {
     console.error('Error in findUserByCode:', err);
@@ -756,6 +760,7 @@ export async function getAllUsers(forUserId?: string): Promise<User[]> {
       );
       return {
         ...user,
+        name: user.id === 'admin_root' ? 'Alpha' : user.name,
         status: isOnline ? 'online' : 'offline',
         isTyping
       };

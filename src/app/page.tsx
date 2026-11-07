@@ -5,6 +5,7 @@ import PasscodeModal from '@/components/PasscodeModal';
 import ContactsSidebar from '@/components/ContactsSidebar';
 import ChatWindow from '@/components/ChatWindow';
 import AdminDashboard from '@/components/AdminDashboard';
+import SwitchAccountModal from '@/components/SwitchAccountModal';
 import BeautyWebsite from '@/components/BeautyWebsite';
 import { User, Message } from '@/lib/db';
 import { encryptText, decryptText, isEncrypted } from '@/lib/crypto';
@@ -47,6 +48,7 @@ export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const [showAdminModal, setShowAdminModal] = useState(false);
+  const [showSwitchModal, setShowSwitchModal] = useState(false);
   const [adminModalTab, setAdminModalTab] = useState<'create' | 'manage'>('manage');
   const [mobileView, setMobileView] = useState<'contacts' | 'chat'>('contacts');
 
@@ -259,10 +261,9 @@ export default function HomePage() {
     }
   };
 
-  // Open Account Switcher / Admin Panel with all accounts
+  // Open Account Switcher Modal (Screenshot 2)
   const handleOpenSwitchAccount = useCallback(() => {
-    setAdminModalTab('manage');
-    setShowAdminModal(true);
+    setShowSwitchModal(true);
   }, []);
 
   // Logout / Switch button: opens account switch option without showing login page
@@ -277,11 +278,11 @@ export default function HomePage() {
         body: JSON.stringify({ userId: currentUser.id, status: 'offline' })
       }).catch(() => {});
     }
-    handleOpenSwitchAccount();
-  }, [currentUser, handleOpenSwitchAccount]);
+    setShowSwitchModal(true);
+  }, [currentUser]);
 
   // Direct Account Switch Flow
-  const handleSwitchUser = async (targetCode: string) => {
+  const handleSwitchUser = async (targetCode: string): Promise<boolean> => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -295,8 +296,9 @@ export default function HomePage() {
     setActiveContactId(null);
     setMessages([]);
     setShowAdminModal(false);
+    setShowSwitchModal(false);
     setMobileView('contacts');
-    await handleLogin(targetCode);
+    return await handleLogin(targetCode);
   };
 
   // Session verification on load: ensure login logic is strictly required whenever opening or refreshing
@@ -343,36 +345,29 @@ export default function HomePage() {
       // Check active secure HttpOnly session token cookie
       fetch('/api/auth/session', { cache: 'no-store' })
         .then((res) => res.json())
-        .then(async (data) => {
+        .then((data) => {
           if (!ignore) {
             if (data.authenticated && data.user) {
               setIsLinkUnlocked(true);
               setCurrentUser(data.user);
-              // When user opens the link, show the admin panel first!
-              setAdminModalTab('manage');
-              setShowAdminModal(true);
             } else {
-              // Open link: auto-login as admin so Admin Panel is visible first!
-              const ok = await handleLogin('ADMIN123');
-              if (ok) {
-                setAdminModalTab('manage');
-                setShowAdminModal(true);
-              }
+              // Login required when opening link
+              setCurrentUser(null);
+              setIsLinkUnlocked(false);
             }
             setInitialChecking(false);
           }
         })
-        .catch(async () => {
+        .catch(() => {
           if (!ignore) {
-            const ok = await handleLogin('ADMIN123');
-            if (ok) {
-              setAdminModalTab('manage');
-              setShowAdminModal(true);
-            }
+            setCurrentUser(null);
+            setIsLinkUnlocked(false);
             setInitialChecking(false);
           }
         });
     } else {
+      setCurrentUser(null);
+      setIsLinkUnlocked(false);
       setInitialChecking(false);
     }
 
@@ -874,18 +869,9 @@ export default function HomePage() {
     );
   }
 
-  // If not logged in, show the Admin Dashboard / Account Switcher directly (never the login page)
-  if (!currentUser) {
-    return (
-      <AdminDashboard
-        initialTab="manage"
-        onClose={() => {}}
-        onSelectUserForChat={(user) => {
-          handleSwitchUser(user.code);
-        }}
-        onSwitchUser={handleSwitchUser}
-      />
-    );
+  // Login required when opening link
+  if (!isLinkUnlocked || !currentUser) {
+    return <PasscodeModal onLogin={handleLogin} loading={authLoading} error={authError} />;
   }
 
   return (
@@ -906,9 +892,12 @@ export default function HomePage() {
             users={users}
             activeContact={activeContact}
             onSelectContact={handleSelectContact}
-            onOpenAdmin={handleOpenSwitchAccount}
-            onSwitchAccount={handleOpenSwitchAccount}
-            onLogout={handleLogout}
+            onOpenAdmin={() => {
+              setAdminModalTab('manage');
+              setShowAdminModal(true);
+            }}
+            onSwitchAccount={() => setShowSwitchModal(true)}
+            onLogout={() => setShowSwitchModal(true)}
             onPanic={handlePanic}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
@@ -957,7 +946,10 @@ export default function HomePage() {
 
               {currentUser.role === 'admin' && (
                 <button
-                  onClick={handleOpenSwitchAccount}
+                  onClick={() => {
+                    setAdminModalTab('manage');
+                    setShowAdminModal(true);
+                  }}
                   className="mt-6 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-2xl shadow-lg shadow-indigo-600/30 flex items-center gap-2 transition-all"
                 >
                   <Shield className="w-4 h-4" />
@@ -968,6 +960,19 @@ export default function HomePage() {
           )}
         </div>
       </div>
+
+      {/* Switch Account Modal (Exact Screenshot 2) */}
+      {showSwitchModal && (
+        <SwitchAccountModal
+          onClose={() => setShowSwitchModal(false)}
+          onSwitchUser={handleSwitchUser}
+          onOpenCreate={() => {
+            setShowSwitchModal(false);
+            setAdminModalTab('create');
+            setShowAdminModal(true);
+          }}
+        />
+      )}
 
       {/* Admin Control Center Modal */}
       {showAdminModal && (
