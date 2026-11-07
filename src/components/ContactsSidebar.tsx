@@ -10,6 +10,7 @@ interface ContactsSidebarProps {
   activeContact: User | null;
   onSelectContact: (user: User) => void;
   onOpenAdmin: () => void;
+  onSwitchAccount?: () => void;
   onLogout: () => void;
   onPanic?: () => void;
   searchQuery: string;
@@ -24,6 +25,7 @@ export default function ContactsSidebar({
   activeContact,
   onSelectContact,
   onOpenAdmin,
+  onSwitchAccount,
   onLogout,
   onPanic,
   searchQuery,
@@ -130,18 +132,16 @@ export default function ContactsSidebar({
             </button>
           )}
 
-          {currentUser.role === 'admin' && (
-            <button
-              onClick={onOpenAdmin}
-              title="Open Admin Control Panel"
-              className="p-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 transition-all"
-            >
-              <Shield className="w-4 h-4" />
-            </button>
-          )}
+          <button
+            onClick={onOpenAdmin}
+            title="Open Admin Control Center"
+            className="p-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 transition-all"
+          >
+            <Shield className="w-4 h-4" />
+          </button>
 
           <button
-            onClick={onLogout}
+            onClick={onSwitchAccount || onOpenAdmin}
             title="Switch User Account"
             className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-all ${
               isLight
@@ -154,8 +154,8 @@ export default function ContactsSidebar({
           </button>
 
           <button
-            onClick={onLogout}
-            title="Logout"
+            onClick={onSwitchAccount || onOpenAdmin}
+            title="Switch / Logout"
             className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-all ${
               isLight
                 ? 'bg-white hover:bg-rose-50 text-slate-600 hover:text-rose-600 border-[#e9edef] shadow-xs'

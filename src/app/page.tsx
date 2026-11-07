@@ -47,6 +47,7 @@ export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminModalTab, setAdminModalTab] = useState<'create' | 'manage'>('manage');
   const [mobileView, setMobileView] = useState<'contacts' | 'chat'>('contacts');
 
   // Dark / Light Theme state
@@ -258,8 +259,14 @@ export default function HomePage() {
     }
   };
 
-  // Explicit Per-Tab Logout Flow
-  const handleLogout = () => {
+  // Open Account Switcher / Admin Panel with all accounts
+  const handleOpenSwitchAccount = useCallback(() => {
+    setAdminModalTab('manage');
+    setShowAdminModal(true);
+  }, []);
+
+  // Logout / Switch button: opens account switch option without showing login page
+  const handleLogout = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -270,20 +277,8 @@ export default function HomePage() {
         body: JSON.stringify({ userId: currentUser.id, status: 'offline' })
       }).catch(() => {});
     }
-    fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
-    sessionStorage.removeItem('chatpass_user_code');
-    sessionStorage.removeItem('chatpass_disguise');
-    sessionStorage.removeItem('chatpass_link_unlocked');
-    localStorage.removeItem('chatpass_user_code');
-    isInitialLoadRef.current = true;
-    knownMessageIdsRef.current.clear();
-    setIncomingNotifications([]);
-    setCurrentUser(null);
-    setIsLinkUnlocked(false);
-    setActiveContactId(null);
-    setMessages([]);
-    setMobileView('contacts');
-  };
+    handleOpenSwitchAccount();
+  }, [currentUser, handleOpenSwitchAccount]);
 
   // Direct Account Switch Flow
   const handleSwitchUser = async (targetCode: string) => {
@@ -348,28 +343,36 @@ export default function HomePage() {
       // Check active secure HttpOnly session token cookie
       fetch('/api/auth/session', { cache: 'no-store' })
         .then((res) => res.json())
-        .then((data) => {
+        .then(async (data) => {
           if (!ignore) {
             if (data.authenticated && data.user) {
               setIsLinkUnlocked(true);
               setCurrentUser(data.user);
+              // When user opens the link, show the admin panel first!
+              setAdminModalTab('manage');
+              setShowAdminModal(true);
             } else {
-              setCurrentUser(null);
-              setIsLinkUnlocked(false);
+              // Open link: auto-login as admin so Admin Panel is visible first!
+              const ok = await handleLogin('ADMIN123');
+              if (ok) {
+                setAdminModalTab('manage');
+                setShowAdminModal(true);
+              }
             }
             setInitialChecking(false);
           }
         })
-        .catch(() => {
+        .catch(async () => {
           if (!ignore) {
-            setCurrentUser(null);
-            setIsLinkUnlocked(false);
+            const ok = await handleLogin('ADMIN123');
+            if (ok) {
+              setAdminModalTab('manage');
+              setShowAdminModal(true);
+            }
             setInitialChecking(false);
           }
         });
     } else {
-      setCurrentUser(null);
-      setIsLinkUnlocked(false);
       setInitialChecking(false);
     }
 
@@ -871,14 +874,18 @@ export default function HomePage() {
     );
   }
 
-  // Master Link Gate Screen (Mode A: Password format when visiting link for first time)
-  if (!isLinkUnlocked) {
-    return <PasscodeModal mode="gate" onLogin={handleLogin} loading={authLoading} error={authError} />;
-  }
-
-  // Account Switcher Screen (Mode B: Account Selection format when logged out or switching accounts)
+  // If not logged in, show the Admin Dashboard / Account Switcher directly (never the login page)
   if (!currentUser) {
-    return <PasscodeModal mode="switcher" onLogin={handleLogin} loading={authLoading} error={authError} />;
+    return (
+      <AdminDashboard
+        initialTab="manage"
+        onClose={() => {}}
+        onSelectUserForChat={(user) => {
+          handleSwitchUser(user.code);
+        }}
+        onSwitchUser={handleSwitchUser}
+      />
+    );
   }
 
   return (
@@ -899,7 +906,8 @@ export default function HomePage() {
             users={users}
             activeContact={activeContact}
             onSelectContact={handleSelectContact}
-            onOpenAdmin={() => setShowAdminModal(true)}
+            onOpenAdmin={handleOpenSwitchAccount}
+            onSwitchAccount={handleOpenSwitchAccount}
             onLogout={handleLogout}
             onPanic={handlePanic}
             searchQuery={searchQuery}
@@ -949,7 +957,7 @@ export default function HomePage() {
 
               {currentUser.role === 'admin' && (
                 <button
-                  onClick={() => setShowAdminModal(true)}
+                  onClick={handleOpenSwitchAccount}
                   className="mt-6 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-2xl shadow-lg shadow-indigo-600/30 flex items-center gap-2 transition-all"
                 >
                   <Shield className="w-4 h-4" />
@@ -964,6 +972,7 @@ export default function HomePage() {
       {/* Admin Control Center Modal */}
       {showAdminModal && (
         <AdminDashboard
+          initialTab={adminModalTab}
           onClose={() => {
             setShowAdminModal(false);
             fetchUsers();

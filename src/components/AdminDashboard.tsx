@@ -23,14 +23,24 @@ interface AdminDashboardProps {
   onClose: () => void;
   onSelectUserForChat: (user: User) => void;
   onSwitchUser?: (userCode: string) => void;
+  initialTab?: 'create' | 'manage';
 }
 
 const EMOJI_AVATARS = ['👨‍💻', '👩‍💼', '🧑‍🎨', '👨‍🏫', '👩‍🔬', '👨‍🚀', '🐱', '🦊', '🦁', '🐼', '⭐', '🚀'];
 
-export default function AdminDashboard({ onClose, onSelectUserForChat, onSwitchUser }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'create' | 'manage'>('create');
+export default function AdminDashboard({ 
+  onClose, 
+  onSelectUserForChat, 
+  onSwitchUser,
+  initialTab = 'manage'
+}: AdminDashboardProps) {
+  const [activeTab, setActiveTab] = useState<'create' | 'manage'>(initialTab);
   const [users, setUsers] = useState<User[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   // Form State
   const [name, setName] = useState('');
@@ -521,10 +531,10 @@ export default function AdminDashboard({ onClose, onSelectUserForChat, onSwitchU
                             onClose();
                           }}
                           title={`Switch account to ${u.name}`}
-                          className="px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 rounded-xl text-xs font-medium flex items-center gap-1 transition-all active:scale-95"
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-all active:scale-95"
                         >
                           <UserCheck className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">Switch</span>
+                          <span>Switch</span>
                         </button>
                       )}
 
