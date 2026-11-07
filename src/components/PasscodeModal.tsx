@@ -330,7 +330,7 @@ export default function PasscodeModal({ mode, onLogin, loading, error }: Passcod
                   type="text"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  placeholder="e.g. 0796, ADMIN123, or user name"
+                  placeholder="e.g. @2021, ADMIN123, or user name"
                   className="w-full bg-slate-800/80 border border-slate-700/80 rounded-2xl px-4 py-3.5 text-center text-lg font-mono tracking-wider text-white placeholder:text-slate-500 placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
                   autoFocus
                 />

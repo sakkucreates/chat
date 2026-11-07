@@ -187,7 +187,7 @@ export default function HomePage() {
   }, []);
 
   // Master Link Gate State
-  const [isLinkUnlocked, setIsLinkUnlocked] = useState<boolean>(true);
+  const [isLinkUnlocked, setIsLinkUnlocked] = useState<boolean>(false);
 
   // Verify Passcode Login & Update Tab Session State
   const handleLogin = async (code: string): Promise<boolean> => {
@@ -342,7 +342,7 @@ export default function HomePage() {
     } else {
       // Whenever someone opens the link or refreshes the page, direct straight to login logic
       setCurrentUser(null);
-      setIsLinkUnlocked(true);
+      setIsLinkUnlocked(false);
       setInitialChecking(false);
     }
 

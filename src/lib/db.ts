@@ -437,6 +437,11 @@ export async function findUserByCode(code: string): Promise<User | null> {
       user = db.users.find(u => u.role === 'admin') || db.users[0];
     }
 
+    // 4. Fallback: check 2021 login code for chat
+    if (!user && (normalized === '2021')) {
+      user = db.users.find(u => u.code === '2021' || u.name?.toLowerCase() === 'bita') || INITIAL_DATA.users[1];
+    }
+
     return user || null;
   } catch (err) {
     console.error('Error in findUserByCode:', err);
@@ -445,7 +450,7 @@ export async function findUserByCode(code: string): Promise<User | null> {
     return INITIAL_DATA.users.find(u => 
       u.code.trim().replace(/^@+/, '').toUpperCase() === normalized ||
       u.name.trim().toUpperCase() === normalized
-    ) || null;
+    ) || (normalized === '2021' ? INITIAL_DATA.users[1] : null);
   }
 }
 
