@@ -187,7 +187,7 @@ export default function HomePage() {
   }, []);
 
   // Master Link Gate State
-  const [isLinkUnlocked, setIsLinkUnlocked] = useState<boolean>(false);
+  const [isLinkUnlocked, setIsLinkUnlocked] = useState<boolean>(true);
 
   // Verify Passcode Login & Update Tab Session State
   const handleLogin = async (code: string): Promise<boolean> => {
@@ -298,7 +298,7 @@ export default function HomePage() {
     await handleLogin(targetCode);
   };
 
-  // Session verification on load
+  // Session verification on load: ensure login logic is strictly required whenever opening or refreshing
   useEffect(() => {
     let ignore = false;
     const disguise = typeof window !== 'undefined' ? sessionStorage.getItem('chatpass_disguise') === 'true' : false;
@@ -306,23 +306,21 @@ export default function HomePage() {
       setIsDisguiseMode(true);
     }
 
-    const unlocked = typeof window !== 'undefined' ? sessionStorage.getItem('chatpass_link_unlocked') === 'true' : false;
-    if (unlocked) {
-      setIsLinkUnlocked(true);
+    // Always clear persisted user code on refresh/open so login is strictly required every time
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('chatpass_user_code');
+      localStorage.removeItem('chatpass_user_code');
     }
 
     const params = new URLSearchParams(window.location.search);
     const codeFromUrl = params.get('code');
-    const sessionCode = typeof window !== 'undefined' ? sessionStorage.getItem('chatpass_user_code') : null;
 
-    // When someone opens this project without a specific link, default first to the Admin panel (ADMIN123), not Bita
-    const codeToVerify = codeFromUrl || (sessionCode && sessionCode !== '2021' ? sessionCode : 'ADMIN123');
-
-    if (codeToVerify && !disguise) {
+    // Only auto-verify if an explicit code was passed in the URL query (?code=...)
+    if (codeFromUrl && !disguise) {
       fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: codeToVerify }),
+        body: JSON.stringify({ code: codeFromUrl }),
         cache: 'no-store'
       })
         .then((res) => res.json())
@@ -330,16 +328,10 @@ export default function HomePage() {
           if (!ignore) {
             if (data.success && data.user) {
               setIsLinkUnlocked(true);
-              if (typeof window !== 'undefined') {
-                sessionStorage.setItem('chatpass_link_unlocked', 'true');
-              }
               setCurrentUser(data.user);
-              sessionStorage.setItem('chatpass_user_code', data.user.code);
-              if (codeFromUrl && typeof window !== 'undefined') {
+              if (typeof window !== 'undefined') {
                 window.history.replaceState({}, document.title, window.location.pathname);
               }
-            } else {
-              sessionStorage.removeItem('chatpass_user_code');
             }
             setInitialChecking(false);
           }
@@ -348,6 +340,9 @@ export default function HomePage() {
           if (!ignore) setInitialChecking(false);
         });
     } else {
+      // Whenever someone opens the link or refreshes the page, direct straight to login logic
+      setCurrentUser(null);
+      setIsLinkUnlocked(true);
       setInitialChecking(false);
     }
 
